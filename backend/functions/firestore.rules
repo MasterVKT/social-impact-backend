@@ -1,0 +1,424 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================================================
+    // UTILITY FUNCTIONS
+    // ============================================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+             resource.data != null && 
+             'admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    function isModerator() {
+      return isAuthenticated() && 
+             resource.data != null && 
+             ('admin' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role ||
+              'moderator' in get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role);
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function hasKYCApproved() {
+      return isAuthenticated() && getUserData().kycStatus == 'approved';
+    }
+    
+    function isProjectCreator(projectId) {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/projects/$(projectId)).data.creatorUid == request.auth.uid;
+    }
+    
+    function isAssignedAuditor(auditId) {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/audits/$(auditId)).data.auditorUid == request.auth.uid;
+    }
+    
+    // ============================================================================
+    // USERS COLLECTION
+    // ============================================================================
+    
+    match /users/{userId} {
+      // Users can read and write their own data
+      allow read, write: if isOwner(userId);
+      
+      // Admins can read all user data
+      allow read: if isAdmin();
+      
+      // Moderators can read basic user info (not sensitive data)
+      allow read: if isModerator() && 
+                     !('kycData' in resource.data) && 
+                     !('bankDetails' in resource.data);
+      
+      // Public read access for basic profile info only
+      allow read: if isAuthenticated() && 
+                     resource.data.profileVisibility == 'public' &&
+                     request.query.limit <= 10;
+      
+      // Subcollections
+      match /sessions/{sessionId} {
+        allow read, write: if isOwner(userId);
+      }
+      
+      match /kyc_sessions/{kycSessionId} {
+        allow read, write: if isOwner(userId);
+        allow read: if isAdmin();
+      }
+      
+      match /activity_logs/{logId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+      }
+    }
+    
+    // ============================================================================
+    // PROJECTS COLLECTION
+    // ============================================================================
+    
+    match /projects/{projectId} {
+      // Project creators can read and write their projects
+      allow read, write: if isProjectCreator(projectId);
+      
+      // Admins and moderators can read all projects
+      allow read, write: if isAdmin();
+      allow read: if isModerator();
+      
+      // Public read access for active/completed projects
+      allow read: if isAuthenticated() && 
+                     resource.data.status in ['active', 'completed', 'funded'] &&
+                     resource.data.visibility == 'public';
+      
+      // KYC-approved users can create new projects
+      allow create: if hasKYCApproved() && 
+                       request.auth.uid == request.resource.data.creatorUid;
+      
+      // Project updates require creator or admin
+      allow update: if (isProjectCreator(projectId) || isAdmin()) &&
+                       request.resource.data.creatorUid == resource.data.creatorUid; // Prevent ownership transfer
+      
+      // Project analytics subcollection
+      match /analytics/{analyticsId} {
+        allow read: if isProjectCreator(projectId) || isAdmin();
+        allow write: if isAdmin(); // Only system can write analytics
+      }
+      
+      // Project events subcollection
+      match /events/{eventId} {
+        allow read: if isAuthenticated();
+        allow create: if isProjectCreator(projectId) || isAdmin();
+      }
+    }
+    
+    // ============================================================================
+    // CONTRIBUTIONS COLLECTION
+    // ============================================================================
+    
+    match /contributions/{contributionId} {
+      // Contributors can read their own contributions
+      allow read: if isAuthenticated() && 
+                     resource.data.contributorUid == request.auth.uid;
+      
+      // Project creators can read contributions to their projects
+      allow read: if isAuthenticated() && 
+                     isProjectCreator(resource.data.projectId);
+      
+      // Admins can read all contributions
+      allow read: if isAdmin();
+      
+      // Only authenticated users can create contributions (via Cloud Function)
+      allow create: if hasKYCApproved() && 
+                       request.auth.uid == request.resource.data.contributorUid;
+      
+      // Updates only allowed by system (Cloud Functions) or admins
+      allow update: if isAdmin();
+      
+      // No deletes allowed
+      allow delete: if false;
+    }
+    
+    // ============================================================================
+    // ESCROW RECORDS COLLECTION
+    // ============================================================================
+    
+    match /escrow_records/{escrowId} {
+      // Contributors can read their escrow records
+      allow read: if isAuthenticated() && 
+                     resource.data.contributorUid == request.auth.uid;
+      
+      // Project creators can read escrow for their projects
+      allow read: if isAuthenticated() && 
+                     isProjectCreator(resource.data.projectId);
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+      
+      // No public access to escrow data
+      allow create, update, delete: if false;
+    }
+    
+    // ============================================================================
+    // AUDITS COLLECTION
+    // ============================================================================
+    
+    match /audits/{auditId} {
+      // Assigned auditors can read and update their audits
+      allow read, write: if isAssignedAuditor(auditId);
+      
+      // Project creators can read audit status for their projects
+      allow read: if isAuthenticated() && 
+                     isProjectCreator(resource.data.projectId);
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+      
+      // Audit creation only by system or admins
+      allow create: if isAdmin();
+    }
+    
+    match /audit_requests/{requestId} {
+      // Auditors can read pending requests (limited fields)
+      allow read: if isAuthenticated() && 
+                     getUserData().userType == 'auditor' && 
+                     getUserData().auditingEnabled == true &&
+                     resource.data.status == 'pending_assignment';
+      
+      // Project creators can read requests for their projects
+      allow read: if isAuthenticated() && 
+                     isProjectCreator(resource.data.projectId);
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+    }
+    
+    match /audit_assignments/{assignmentId} {
+      // Assigned auditors can read and update their assignments
+      allow read, write: if isAuthenticated() && 
+                             resource.data.auditorUid == request.auth.uid;
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // NOTIFICATIONS COLLECTION
+    // ============================================================================
+    
+    match /notifications/{notificationId} {
+      // Users can read and update their own notifications
+      allow read, write: if isAuthenticated() && 
+                             resource.data.recipientUid == request.auth.uid;
+      
+      // System can create notifications
+      allow create: if isAuthenticated(); // Cloud Functions create notifications
+      
+      // Admins can read all notifications
+      allow read: if isAdmin();
+      
+      // No deletes allowed (for audit trail)
+      allow delete: if false;
+    }
+    
+    // ============================================================================
+    // REFUNDS COLLECTION
+    // ============================================================================
+    
+    match /refunds/{refundId} {
+      // Contributors can read their own refunds
+      allow read: if isAuthenticated() && 
+                     resource.data.contributorUid == request.auth.uid;
+      
+      // Project creators can read refunds for their projects
+      allow read: if isAuthenticated() && 
+                     isProjectCreator(resource.data.projectId);
+      
+      // Admins have full access
+      allow read: if isAdmin();
+      
+      // Only system can write refund records
+      allow create, update: if isAdmin();
+      allow delete: if false;
+    }
+    
+    // ============================================================================
+    // PLATFORM STATISTICS & REPORTS
+    // ============================================================================
+    
+    match /platform_stats/{statId} {
+      // Public read access to general stats
+      allow read: if isAuthenticated() && 
+                     statId == 'public';
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+      
+      // No public write access
+      allow create, update, delete: if false;
+    }
+    
+    match /monthly_reports/{reportId} {
+      // Stakeholders and admins can read reports
+      allow read: if isAuthenticated() && 
+                     ('admin' in getUserData().role || 
+                      'stakeholder' in getUserData().role ||
+                      'investor' in getUserData().role);
+      
+      // Only system creates reports
+      allow write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // RECOMMENDATION & TRENDING DATA
+    // ============================================================================
+    
+    match /recommendation_cache/{cacheId} {
+      // Users can read their own recommendations
+      allow read: if isAuthenticated() && 
+                     resource.data.userId == request.auth.uid;
+      
+      // System updates recommendations
+      allow write: if isAdmin();
+    }
+    
+    match /platform_data/{dataType} {
+      // Public read access to trending projects and category trends
+      allow read: if isAuthenticated() && 
+                     dataType in ['trending_projects', 'category_trends'];
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // FINANCIAL AUDIT TRAILS
+    // ============================================================================
+    
+    match /interest_calculations/{calculationId} {
+      // Contributors can read calculations for their contributions
+      allow read: if isAuthenticated() && 
+                     resource.data.contributorUid == request.auth.uid;
+      
+      // Admins have full access
+      allow read: if isAdmin();
+      
+      // Only system can write calculations
+      allow write: if false;
+    }
+    
+    match /scheduled_refunds/{refundId} {
+      // Contributors can read their scheduled refunds
+      allow read: if isAuthenticated() && 
+                     resource.data.contributorUid == request.auth.uid;
+      
+      // Admins have full access
+      allow read, write: if isAdmin();
+      
+      // No public write access
+      allow create, update: if false;
+    }
+    
+    // ============================================================================
+    // SYSTEM LOGS & MONITORING
+    // ============================================================================
+    
+    match /{path=**}/logs/{logId} {
+      // Only admins can access logs
+      allow read: if isAdmin();
+      allow write: if false; // Logs are append-only via Cloud Functions
+    }
+    
+    match /scheduled_executions/{executionId} {
+      // Admins can read execution logs
+      allow read: if isAdmin();
+      allow write: if false; // Only system writes execution logs
+    }
+    
+    match /platform_alerts/{alertId} {
+      // Admins can read and manage alerts
+      allow read, write: if isAdmin();
+    }
+    
+    // ============================================================================
+    // SUPPORT & ESCALATIONS
+    // ============================================================================
+    
+    match /support_tickets/{ticketId} {
+      // Users can read tickets they created
+      allow read: if isAuthenticated() && 
+                     resource.data.createdBy == request.auth.uid;
+      
+      // Users can create support tickets
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == request.resource.data.createdBy;
+      
+      // Admins and support staff have full access
+      allow read, write: if isAdmin() || 
+                             ('support' in getUserData().role);
+    }
+    
+    match /audit_escalations/{escalationId} {
+      // Admins can read and manage escalations
+      allow read, write: if isAdmin();
+      
+      // Project creators can read escalations for their projects
+      allow read: if isAuthenticated() && 
+                     isProjectCreator(resource.data.projectId);
+    }
+    
+    // ============================================================================
+    // ARCHIVES (Read-only historical data)
+    // ============================================================================
+    
+    match /{path=**}/archives/{archiveId} {
+      // Only admins can access archived data
+      allow read: if isAdmin();
+      allow write: if false; // Archives are write-once by system
+    }
+    
+    // ============================================================================
+    // RATE LIMITING & TEMPORARY DATA
+    // ============================================================================
+    
+    match /rate_limits/{limitId} {
+      // No public access to rate limiting data
+      allow read, write: if false;
+    }
+    
+    match /temp_uploads/{uploadId} {
+      // Users can read their own temp uploads
+      allow read: if isAuthenticated() && 
+                     resource.data.uploadedBy == request.auth.uid;
+      
+      // Users can create temp uploads
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == request.resource.data.uploadedBy;
+      
+      // System can update/delete temp uploads
+      allow update, delete: if isAdmin();
+    }
+    
+    match /temp_cache/{cacheId} {
+      // No public access to cache data
+      allow read, write: if false;
+    }
+    
+    // ============================================================================
+    // DEFAULT DENY ALL
+    // ============================================================================
+    
+    // Deny access to any collection not explicitly allowed above
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "workspace": {
+    "name": "Social Impact Platform",
+    "description": "Firebase backend for social finance impact platform",
+    "documentation_paths": ["./Docs MVP/"],
+    "working_directory": "./backend/"
+  }
+}
