@@ -27,7 +27,7 @@ const requestSchema = Joi.object({
 /**
  * Valide la complétude du projet avant soumission
  */
-function validateProjectCompleteness(project: ProjectDocument): void {
+function validateProjectCompleteness(project: any): void {
   const errors: string[] = [];
 
   // Vérifier titre et descriptions
@@ -35,7 +35,7 @@ function validateProjectCompleteness(project: ProjectDocument): void {
     errors.push('Title must be at least 10 characters');
   }
 
-  if (!project.description || project.description.length < 100) {
+  if (!project.fullDescription || project.fullDescription.length < 100) {
     errors.push('Description must be at least 100 characters');
   }
 
@@ -60,37 +60,8 @@ function validateProjectCompleteness(project: ProjectDocument): void {
     }
   }
 
-  if (!project.funding?.deadline) {
+  if (!project.timeline?.endDate) {
     errors.push('Funding deadline is required');
-  }
-
-  // Vérifier milestones
-  if (!project.milestones || project.milestones.length === 0) {
-    errors.push('At least one milestone is required');
-  } else {
-    // Vérifier chaque milestone
-    project.milestones.forEach((milestone: any, index: number) => {
-      if (!milestone.title) {
-        errors.push(`Milestone ${index + 1}: Title is required`);
-      }
-      if (!milestone.description) {
-        errors.push(`Milestone ${index + 1}: Description is required`);
-      }
-      if (!milestone.fundingPercentage || milestone.fundingPercentage <= 0) {
-        errors.push(`Milestone ${index + 1}: Funding percentage must be greater than 0`);
-      }
-    });
-
-    // Vérifier que la somme des pourcentages = 100%
-    const totalPercentage = project.milestones.reduce(
-      (sum: number, m: any) => sum + (m.fundingPercentage || 0),
-      0
-    );
-    if (Math.abs(totalPercentage - 100) > 0.1) {
-      errors.push(
-        `Sum of milestone funding percentages (${totalPercentage}%) must equal 100%`
-      );
-    }
   }
 
   // Vérifier média
@@ -103,14 +74,9 @@ function validateProjectCompleteness(project: ProjectDocument): void {
     errors.push('Project location is required');
   }
 
-  // Vérifier équipe
-  if (!project.team || project.team.length === 0) {
-    errors.push('At least one team member is required');
-  }
-
-  // Vérifier objectifs d'impact
-  if (!project.impactGoals || !project.impactGoals.primary) {
-    errors.push('Primary impact goal is required');
+  // Vérifier impact
+  if (!project.impact || !project.impact.targetAudience) {
+    errors.push('Target audience for impact is required');
   }
 
   // Si erreurs, rejeter
@@ -240,7 +206,7 @@ export const submitProject = https.onCall(
     const userId = context.auth.uid;
 
     // ÉTAPE 2 : Valider les données d'entrée
-    const validatedData = await validateWithJoi(data, requestSchema);
+    const validatedData: any = await validateWithJoi(data, requestSchema);
     const { projectId } = validatedData;
 
     logger.info('Submitting project for review', { userId, projectId });
@@ -256,7 +222,8 @@ export const submitProject = https.onCall(
     }
 
     // ÉTAPE 4 : Vérifier que l'utilisateur est le créateur
-    if (project.creatorUid !== userId && project.creator?.uid !== userId) {
+    const creatorUid = (project as any).creatorUid || project.creator?.uid;
+    if (creatorUid !== userId) {
       throw new https.HttpsError(
         'permission-denied',
         'Only the project creator can submit the project'
@@ -264,7 +231,7 @@ export const submitProject = https.onCall(
     }
 
     // ÉTAPE 5 : Vérifier le statut actuel
-    if (project.status !== STATUS.PROJECT.DRAFT && project.status !== 'draft') {
+    if (project.status !== 'draft') {
       throw new https.HttpsError(
         'failed-precondition',
         `Project must be in draft status to be submitted. Current status: ${project.status}`
@@ -279,7 +246,7 @@ export const submitProject = https.onCall(
     }
 
     // ÉTAPE 7 : Vérifier que le créateur a KYC approuvé
-    if (user.kyc?.status !== STATUS.KYC.APPROVED && user.kyc?.status !== 'approved') {
+    if (user.kyc?.status !== 'approved') {
       throw new https.HttpsError(
         'failed-precondition',
         `KYC verification must be approved before submitting a project. Current KYC status: ${user.kyc?.status || 'none'}`
@@ -292,10 +259,9 @@ export const submitProject = https.onCall(
     // ÉTAPE 9 : Mettre à jour le statut du projet
     const now = admin.firestore.FieldValue.serverTimestamp();
     const updateData = {
-      status: STATUS.PROJECT.UNDER_REVIEW || 'under_review',
+      status: 'under_review',
       'timeline.submittedAt': now,
       'moderation.status': 'pending',
-      'moderation.submittedAt': now,
       updatedAt: now,
       version: admin.firestore.FieldValue.increment(1),
     };

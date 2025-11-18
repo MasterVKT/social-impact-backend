@@ -151,7 +151,7 @@ export const approveProject = https.onCall(
     }
 
     // ÉTAPE 3 : Valider les données d'entrée
-    const validatedData = await validateWithJoi(data, requestSchema);
+    const validatedData: any = await validateWithJoi(data, requestSchema);
     const { projectId, action, comments, publishImmediately } = validatedData;
 
     logger.info('Processing project moderation', {
@@ -171,10 +171,7 @@ export const approveProject = https.onCall(
     }
 
     // ÉTAPE 5 : Vérifier le statut actuel
-    if (
-      project.status !== STATUS.PROJECT.UNDER_REVIEW &&
-      project.status !== 'under_review'
-    ) {
+    if (project.status !== 'under_review') {
       throw new https.HttpsError(
         'failed-precondition',
         `Project must be under review to be moderated. Current status: ${project.status}`
@@ -186,11 +183,8 @@ export const approveProject = https.onCall(
     let updateData: any;
 
     if (action === 'approve') {
-      // Approbation : passer le projet en 'live' (ou 'approved' selon workflow)
-      const newStatus =
-        publishImmediately && STATUS.PROJECT.LIVE
-          ? STATUS.PROJECT.LIVE
-          : STATUS.PROJECT.APPROVED || 'approved';
+      // Approbation : passer le projet en 'live'
+      const newStatus = 'live';
 
       updateData = {
         status: newStatus,
@@ -214,7 +208,7 @@ export const approveProject = https.onCall(
     } else {
       // Rejet : remettre le projet en 'draft'
       updateData = {
-        status: STATUS.PROJECT.DRAFT || 'draft',
+        status: 'draft',
         'moderation.status': 'rejected',
         'moderation.reviewedBy': userId,
         'moderation.reviewedAt': now,
@@ -233,7 +227,7 @@ export const approveProject = https.onCall(
       .update(updateData);
 
     // ÉTAPE 8 : Notifier le créateur
-    const creatorUid = project.creatorUid || project.creator?.uid;
+    const creatorUid = (project as any).creatorUid || project.creator?.uid;
     if (creatorUid) {
       await notifyCreator(
         creatorUid,

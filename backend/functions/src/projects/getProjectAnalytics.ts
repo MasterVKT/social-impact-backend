@@ -292,7 +292,7 @@ export const getProjectAnalytics = https.onCall(
     const userId = context.auth.uid;
 
     // ÉTAPE 2 : Valider les données d'entrée
-    const validatedData = await validateWithJoi(data, requestSchema);
+    const validatedData: any = await validateWithJoi(data, requestSchema);
     const {
       projectId,
       includeContributions,
@@ -316,7 +316,8 @@ export const getProjectAnalytics = https.onCall(
     // Seuls le créateur et les admins peuvent voir les analytics détaillées
     const user = await firestoreHelper.getDocument<UserDocument>('users', userId);
 
-    const isCreator = project.creatorUid === userId || project.creator?.uid === userId;
+    const creatorUid = (project as any).creatorUid || project.creator?.uid;
+    const isCreator = creatorUid === userId;
     const isAdmin = user?.userType === 'admin';
 
     if (!isCreator && !isAdmin) {
@@ -328,14 +329,14 @@ export const getProjectAnalytics = https.onCall(
 
     // ÉTAPE 5 : Calculer les analytics de base
     const now = new Date();
-    const createdAt = project.createdAt?._seconds
-      ? new Date(project.createdAt._seconds * 1000)
+    const createdAt = project.timeline?.createdAt?.seconds
+      ? new Date(project.timeline.createdAt.seconds * 1000)
       : now;
     const daysActive = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
 
     let daysRemaining;
-    if (project.funding?.deadline?._seconds) {
-      const deadline = new Date(project.funding.deadline._seconds * 1000);
+    if (project.timeline?.endDate?.seconds) {
+      const deadline = new Date(project.timeline.endDate.seconds * 1000);
       daysRemaining = Math.max(
         0,
         Math.floor((deadline.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
