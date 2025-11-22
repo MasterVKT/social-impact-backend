@@ -1,0 +1,460 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
+    // Authentification
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Rôles utilisateur
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().userType == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isCreator() {
+      return hasRole('creator');
+    }
+
+    function isAuditor() {
+      return hasRole('auditor');
+    }
+
+    function isContributor() {
+      return hasRole('contributor');
+    }
+
+    // KYC Status
+    function isKYCApproved() {
+      return isAuthenticated() && getUserData().kyc.status == 'approved';
+    }
+
+    function hasKYCLevel(level) {
+      return isAuthenticated() && getUserData().kyc.level >= level;
+    }
+
+    // Account Status
+    function isAccountActive() {
+      return isAuthenticated() && getUserData().accountStatus == 'active';
+    }
+
+    // Validation helpers
+    function isValidEmail(email) {
+      return email.matches('^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$');
+    }
+
+    function isValidPhoneNumber(phone) {
+      return phone == null || phone.matches('^\\+[1-9]\\d{1,14}$');
+    }
+
+    function isValidString(str, minLen, maxLen) {
+      return str is string && str.size() >= minLen && str.size() <= maxLen;
+    }
+
+    // ============================================
+    // COLLECTION: users
+    // ============================================
+
+    match /users/{userId} {
+      // Lecture : Utilisateur peut lire son propre profil + admins
+      // Les autres utilisateurs peuvent voir des profils publics (limité)
+      allow read: if isOwner(userId) ||
+                     isAdmin() ||
+                     (isAuthenticated() &&
+                      get(/databases/$(database)/documents/users/$(userId)).data.preferences.privacy.profilePublic == true);
+
+      // Création : Seulement lors de la création du compte (uid match + email match)
+      allow create: if isOwner(userId) &&
+                       request.resource.data.uid == userId &&
+                       request.resource.data.email == request.auth.token.email &&
+                       isValidEmail(request.resource.data.email) &&
+                       isValidString(request.resource.data.firstName, 2, 50) &&
+                       isValidString(request.resource.data.lastName, 2, 50) &&
+                       request.resource.data.userType in ['contributor', 'creator', 'auditor'] && // admin créé manuellement
+                       request.resource.data.keys().hasAll(['uid', 'email', 'firstName', 'lastName', 'userType']) &&
+                       isValidPhoneNumber(request.resource.data.get('phoneNumber', null));
+
+      // Mise à jour : Seulement propriétaire ou admin, avec validation
+      allow update: if (isOwner(userId) || isAdmin()) &&
+                       validateUserUpdate(userId, request.resource.data);
+
+      // Suppression : Interdite (soft delete seulement via Cloud Functions)
+      allow delete: if false;
+
+      // Validation des mises à jour utilisateur
+      function validateUserUpdate(uid, data) {
+        let existingData = resource.data;
+        return data.uid == uid && // UID immuable
+               data.email == existingData.email && // Email immuable (changement via Auth)
+               data.userType == existingData.userType && // Type immuable (sauf admin)
+               // Validation des champs modifiables
+               (data.firstName == existingData.firstName || isValidString(data.firstName, 2, 50)) &&
+               (data.lastName == existingData.lastName || isValidString(data.lastName, 2, 50)) &&
+               (data.phoneNumber == existingData.phoneNumber || isValidPhoneNumber(data.get('phoneNumber', null))) &&
+               // Bio max 500 caractères
+               (!data.keys().hasAny(['bio']) || data.bio == null || (data.bio is string && data.bio.size() <= 500)) &&
+               // KYC ne peut être modifié que par Cloud Functions (sauf tentative de modification)
+               (!request.resource.data.diff(existingData).affectedKeys().hasAny(['kyc']) || isAdmin()) &&
+               // Stats ne peuvent être modifiées que par Cloud Functions
+               (!request.resource.data.diff(existingData).affectedKeys().hasAny(['stats']) || isAdmin()) &&
+               // Account status seulement par admin
+               (!request.resource.data.diff(existingData).affectedKeys().hasAny(['accountStatus']) || isAdmin());
+      }
+    }
+
+    // ============================================
+    // COLLECTION: projects
+    // ============================================
+
+    match /projects/{projectId} {
+      // Lecture :
+      // - Public si statut 'live', 'funded', 'active', 'completed'
+      // - Créateur peut voir tous ses projets
+      // - Admin peut voir tous les projets
+      allow read: if resource.data.status in ['live', 'funded', 'active', 'completed'] ||
+                     isOwner(resource.data.creator.uid) ||
+                     isAdmin();
+
+      // Création : Seulement créateurs KYC approuvés + compte actif
+      allow create: if isCreator() &&
+                       isKYCApproved() &&
+                       isAccountActive() &&
+                       validateProjectCreate(request.resource.data);
+
+      // Mise à jour : Créateur ou admin
+      allow update: if (isOwner(resource.data.creator.uid) || isAdmin()) &&
+                       validateProjectUpdate(resource.data, request.resource.data);
+
+      // Suppression : Seulement admin (créateur peut mettre en 'cancelled')
+      allow delete: if isAdmin();
+
+      // Validation création projet
+      function validateProjectCreate(data) {
+        return data.creator.uid == request.auth.uid &&
+               data.status == 'draft' && // Nouveau projet = draft
+               isValidString(data.title, 10, 100) &&
+               isValidString(data.shortDescription, 50, 200) &&
+               isValidString(data.fullDescription, 500, 5000) &&
+               data.category in ['environment', 'education', 'health', 'community', 'innovation'] &&
+               data.funding.goal >= 100000 && // Min 1000 EUR (en centimes)
+               data.funding.goal <= 5000000 && // Max 50000 EUR
+               data.funding.raised == 0 &&
+               data.funding.percentage == 0 &&
+               data.funding.contributorsCount == 0 &&
+               data.funding.currency == 'EUR' &&
+               data.timeline.campaignDuration in [30, 60, 90] &&
+               data.media.keys().hasAll(['coverImage']) &&
+               data.settings.keys().hasAll(['allowAnonymousContributions', 'publicContributorsList']);
+      }
+
+      // Validation mise à jour projet
+      function validateProjectUpdate(existingData, newData) {
+        let isStatusChange = newData.status != existingData.status;
+        let isCreatorUpdate = isOwner(existingData.creator.uid);
+        let isAdminUpdate = isAdmin();
+
+        return newData.creator.uid == existingData.creator.uid && // Créateur immuable
+               // Validation transitions de statut
+               (!isStatusChange || validateStatusTransition(existingData.status, newData.status, isCreatorUpdate, isAdminUpdate)) &&
+               // Montants collectés et stats ne peuvent être modifiés que par Cloud Functions
+               (newData.funding.raised == existingData.funding.raised || isAdminUpdate) &&
+               (newData.funding.contributorsCount == existingData.funding.contributorsCount || isAdminUpdate) &&
+               (newData.analytics == existingData.analytics || isAdminUpdate) &&
+               // Validations des champs modifiables
+               (!newData.diff(existingData).affectedKeys().hasAny(['title']) || isValidString(newData.title, 10, 100)) &&
+               (!newData.diff(existingData).affectedKeys().hasAny(['shortDescription']) || isValidString(newData.shortDescription, 50, 200)) &&
+               (!newData.diff(existingData).affectedKeys().hasAny(['fullDescription']) || isValidString(newData.fullDescription, 500, 5000));
+      }
+
+      // Validation transitions de statut
+      function validateStatusTransition(oldStatus, newStatus, isCreator, isAdmin) {
+        // draft -> under_review : créateur soumet
+        return (oldStatus == 'draft' && newStatus == 'under_review' && isCreator) ||
+               // under_review -> live : admin approuve
+               (oldStatus == 'under_review' && newStatus == 'live' && isAdmin) ||
+               // under_review -> draft : admin rejette
+               (oldStatus == 'under_review' && newStatus == 'draft' && isAdmin) ||
+               // live -> funded : automatique via Cloud Function (admin override)
+               (oldStatus == 'live' && newStatus == 'funded' && isAdmin) ||
+               // funded -> active : automatique via Cloud Function (admin override)
+               (oldStatus == 'funded' && newStatus == 'active' && isAdmin) ||
+               // active -> completed : via Cloud Function après tous milestones (admin override)
+               (oldStatus == 'active' && newStatus == 'completed' && isAdmin) ||
+               // * -> cancelled : créateur ou admin
+               (newStatus == 'cancelled' && (isCreator || isAdmin)) ||
+               // * -> failed : admin seulement
+               (newStatus == 'failed' && isAdmin);
+      }
+
+      // ============================================
+      // SUB-COLLECTION: milestones
+      // ============================================
+
+      match /milestones/{milestoneId} {
+        // Lecture : Si projet lisible
+        allow read: if get(/databases/$(database)/documents/projects/$(projectId)).data.status in ['live', 'funded', 'active', 'completed'] ||
+                       isOwner(get(/databases/$(database)/documents/projects/$(projectId)).data.creator.uid) ||
+                       isAdmin();
+
+        // Création : Via Cloud Functions seulement (lors de création projet)
+        allow create: if false;
+
+        // Mise à jour : Créateur du projet ou admin
+        // Auditeur peut mettre à jour la section audit
+        allow update: if isOwner(get(/databases/$(database)/documents/projects/$(projectId)).data.creator.uid) ||
+                         isAdmin() ||
+                         (isAuditor() &&
+                          resource.data.audit.auditorUid == request.auth.uid &&
+                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['audit', 'status', 'updatedAt', 'version']));
+
+        // Suppression : Interdite (supprimer le projet supprime les milestones)
+        allow delete: if false;
+      }
+
+      // ============================================
+      // SUB-COLLECTION: contributions
+      // ============================================
+
+      match /contributions/{contributionId} {
+        // Lecture : Contributeur, créateur du projet, ou admin
+        allow read: if isOwner(resource.data.contributor.uid) ||
+                       isOwner(get(/databases/$(database)/documents/projects/$(projectId)).data.creator.uid) ||
+                       isAdmin();
+
+        // Création : Via Cloud Functions seulement (createContribution)
+        // Car nécessite intégration Stripe + validation KYC
+        allow create: if false;
+
+        // Mise à jour : Via Cloud Functions seulement (confirmPayment, processRefunds)
+        allow update: if false;
+
+        // Suppression : Interdite (audit trail)
+        allow delete: if false;
+      }
+
+      // ============================================
+      // SUB-COLLECTION: updates (mises à jour projet)
+      // ============================================
+
+      match /updates/{updateId} {
+        // Lecture : Public si projet public
+        allow read: if get(/databases/$(database)/documents/projects/$(projectId)).data.status in ['live', 'funded', 'active', 'completed'];
+
+        // Création : Créateur du projet ou admin
+        allow create: if (isOwner(get(/databases/$(database)/documents/projects/$(projectId)).data.creator.uid) || isAdmin()) &&
+                         isValidString(request.resource.data.title, 10, 100) &&
+                         isValidString(request.resource.data.content, 50, 5000);
+
+        // Mise à jour : Créateur de l'update ou admin
+        allow update: if isOwner(resource.data.authorUid) || isAdmin();
+
+        // Suppression : Admin seulement
+        allow delete: if isAdmin();
+      }
+    }
+
+    // ============================================
+    // COLLECTION: contributions (globale, pas sous-collection)
+    // ============================================
+
+    match /contributions/{contributionId} {
+      // Lecture : Contributeur, créateur du projet concerné, ou admin
+      allow read: if isOwner(resource.data.contributorUid) ||
+                     isOwner(resource.data.projectCreatorUid) ||
+                     isAdmin();
+
+      // Création : Via Cloud Functions seulement (pour Stripe)
+      allow create: if false;
+
+      // Mise à jour : Via Cloud Functions seulement
+      allow update: if false;
+
+      // Suppression : Interdite (audit trail financier)
+      allow delete: if false;
+    }
+
+    // ============================================
+    // COLLECTION: audits
+    // ============================================
+
+    match /audits/{auditId} {
+      // Lecture : Auditeur assigné, créateur du projet, ou admin
+      allow read: if isOwner(resource.data.auditorUid) ||
+                     isOwner(resource.data.projectCreatorUid) ||
+                     isAdmin();
+
+      // Création : Via Cloud Functions seulement (assignAuditor)
+      allow create: if false;
+
+      // Mise à jour : Auditeur assigné ou admin
+      allow update: if isOwner(resource.data.auditorUid) || isAdmin();
+
+      // Suppression : Admin seulement
+      allow delete: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION: notifications
+    // ============================================
+
+    match /notifications/{notificationId} {
+      // Lecture : Destinataire seulement
+      allow read: if isOwner(resource.data.userId);
+
+      // Création : Via Cloud Functions seulement (sendNotification)
+      allow create: if false;
+
+      // Mise à jour : Destinataire seulement (pour marquer comme lu)
+      // Seulement les champs 'read' et 'readAt' peuvent être modifiés
+      allow update: if isOwner(resource.data.userId) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+
+      // Suppression : Destinataire ou admin
+      allow delete: if isOwner(resource.data.userId) || isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION: platform_stats (statistiques plateforme)
+    // ============================================
+
+    match /platform_stats/{statsId} {
+      // Lecture : Admin seulement
+      allow read: if isAdmin();
+
+      // Écriture : Via Cloud Functions seulement
+      allow write: if false;
+    }
+
+    // ============================================
+    // COLLECTION: system_config (configuration système)
+    // ============================================
+
+    match /system_config/{configId} {
+      // Lecture : Admin seulement
+      allow read: if isAdmin();
+
+      // Écriture : Admin seulement
+      allow write: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION: kyc_documents (documents KYC)
+    // ============================================
+
+    match /kyc_documents/{documentId} {
+      // Lecture : Propriétaire ou admin (données ultra-sensibles)
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+
+      // Création : Via Cloud Functions seulement (après upload Storage)
+      allow create: if false;
+
+      // Mise à jour : Via Cloud Functions seulement (webhook Sumsub)
+      allow update: if false;
+
+      // Suppression : Interdite (conformité réglementaire)
+      allow delete: if false;
+    }
+
+    // ============================================
+    // COLLECTION: transactions (historique financier)
+    // ============================================
+
+    match /transactions/{transactionId} {
+      // Lecture : Parties concernées ou admin
+      allow read: if isOwner(resource.data.fromUserId) ||
+                     isOwner(resource.data.toUserId) ||
+                     isAdmin();
+
+      // Écriture : Via Cloud Functions seulement (audit trail)
+      allow write: if false;
+    }
+
+    // ============================================
+    // COLLECTION: reports (signalements)
+    // ============================================
+
+    match /reports/{reportId} {
+      // Lecture : Auteur du signalement ou admin
+      allow read: if isOwner(resource.data.reportedBy) || isAdmin();
+
+      // Création : Utilisateurs authentifiés peuvent signaler
+      allow create: if isAuthenticated() &&
+                       request.resource.data.reportedBy == request.auth.uid &&
+                       request.resource.data.type in ['project', 'user', 'comment'] &&
+                       request.resource.data.reason in ['spam', 'fraud', 'inappropriate', 'other'] &&
+                       isValidString(request.resource.data.description, 20, 1000);
+
+      // Mise à jour : Admin seulement (traitement du signalement)
+      allow update: if isAdmin();
+
+      // Suppression : Admin seulement
+      allow delete: if isAdmin();
+    }
+
+    // ============================================
+    // COLLECTION: messages (système de messagerie future)
+    // ============================================
+
+    match /messages/{messageId} {
+      // Lecture : Expéditeur ou destinataire
+      allow read: if isOwner(resource.data.fromUserId) ||
+                     isOwner(resource.data.toUserId);
+
+      // Création : Utilisateur authentifié peut envoyer
+      allow create: if isAuthenticated() &&
+                       request.resource.data.fromUserId == request.auth.uid &&
+                       isValidString(request.resource.data.content, 1, 2000);
+
+      // Mise à jour : Destinataire peut marquer comme lu
+      allow update: if isOwner(resource.data.toUserId) &&
+                       request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read', 'readAt']);
+
+      // Suppression : Expéditeur ou destinataire
+      allow delete: if isOwner(resource.data.fromUserId) ||
+                       isOwner(resource.data.toUserId);
+    }
+
+    // ============================================
+    // COLLECTION: sessions (tracking sessions utilisateur)
+    // ============================================
+
+    match /sessions/{sessionId} {
+      // Lecture : Propriétaire ou admin
+      allow read: if isOwner(resource.data.userId) || isAdmin();
+
+      // Création : Via Cloud Functions (onUserLogin trigger)
+      allow create: if false;
+
+      // Mise à jour : Via Cloud Functions (mise à jour activité)
+      allow update: if false;
+
+      // Suppression : Via Cloud Functions (cleanup)
+      allow delete: if false;
+    }
+
+    // ============================================
+    // RÈGLE PAR DÉFAUT : TOUT BLOQUER
+    // ============================================
+
+    // Toute collection non explicitement autorisée est bloquée
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

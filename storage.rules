@@ -1,0 +1,350 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
+    // Authentification
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Rôles utilisateur (via Firestore lookup)
+    function getUserData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().userType == role;
+    }
+
+    function isAdmin() {
+      return hasRole('admin');
+    }
+
+    function isCreator() {
+      return hasRole('creator');
+    }
+
+    function isAuditor() {
+      return hasRole('auditor');
+    }
+
+    // KYC Status
+    function isKYCApproved() {
+      return isAuthenticated() && getUserData().kyc.status == 'approved';
+    }
+
+    // Validation fichiers
+    function isImageFile() {
+      return request.resource.contentType.matches('image/.*');
+    }
+
+    function isPDFFile() {
+      return request.resource.contentType == 'application/pdf';
+    }
+
+    function isDocumentFile() {
+      return request.resource.contentType.matches('application/(pdf|msword|vnd.openxmlformats-officedocument.wordprocessingml.document)');
+    }
+
+    function isVideoFile() {
+      return request.resource.contentType.matches('video/.*');
+    }
+
+    function isValidSize(maxSizeMB) {
+      return request.resource.size < maxSizeMB * 1024 * 1024;
+    }
+
+    function isValidImageFile(maxSizeMB) {
+      return isImageFile() && isValidSize(maxSizeMB);
+    }
+
+    // Project ownership
+    function isProjectCreator(projectId) {
+      return isAuthenticated() &&
+             firestore.get(/databases/(default)/documents/projects/$(projectId)).data.creator.uid == request.auth.uid;
+    }
+
+    // Audit ownership
+    function isAuditorForAudit(auditId) {
+      return isAuthenticated() &&
+             firestore.get(/databases/(default)/documents/audits/$(auditId)).data.auditorUid == request.auth.uid;
+    }
+
+    function isProjectCreatorForAudit(auditId) {
+      let audit = firestore.get(/databases/(default)/documents/audits/$(auditId)).data;
+      return isAuthenticated() &&
+             firestore.get(/databases/(default)/documents/projects/$(audit.projectId)).data.creator.uid == request.auth.uid;
+    }
+
+    // ============================================
+    // USER PROFILE PICTURES
+    // Path: /users/{userId}/profile/{fileName}
+    // ============================================
+
+    match /users/{userId}/profile/{fileName} {
+      // Lecture : Public (pour affichage profil)
+      // Les photos de profil sont publiques par nature
+      allow read: if true;
+
+      // Écriture : Propriétaire seulement
+      allow write: if isOwner(userId) &&
+                      isValidImageFile(5); // Max 5MB
+    }
+
+    // ============================================
+    // KYC DOCUMENTS (HIGHLY SENSITIVE)
+    // Path: /users/{userId}/kyc/{fileName}
+    // ============================================
+
+    match /users/{userId}/kyc/{fileName} {
+      // Lecture : Propriétaire + Admins seulement
+      // Documents KYC ultra-sensibles : pièces d'identité, justificatifs
+      allow read: if isOwner(userId) || isAdmin();
+
+      // Écriture : Propriétaire seulement
+      // Types autorisés : Images (scans) ou PDF
+      allow create: if isOwner(userId) &&
+                       (isImageFile() || isPDFFile()) &&
+                       isValidSize(10); // Max 10MB pour documents
+
+      // Mise à jour : Interdite (upload nouveau fichier = nouveau document)
+      allow update: if false;
+
+      // Suppression : Interdite (conformité GDPR/audit trail)
+      // Utiliser soft delete via Firestore
+      allow delete: if false;
+    }
+
+    // ============================================
+    // PROJECT COVER IMAGES
+    // Path: /projects/{projectId}/cover/{fileName}
+    // ============================================
+
+    match /projects/{projectId}/cover/{fileName} {
+      // Lecture : Public (pour affichage projet)
+      allow read: if true;
+
+      // Écriture : Créateur du projet seulement
+      allow write: if isProjectCreator(projectId) &&
+                      isValidImageFile(10); // Max 10MB
+    }
+
+    // ============================================
+    // PROJECT GALLERY IMAGES
+    // Path: /projects/{projectId}/gallery/{fileName}
+    // ============================================
+
+    match /projects/{projectId}/gallery/{fileName} {
+      // Lecture : Public (pour galerie projet)
+      allow read: if true;
+
+      // Écriture : Créateur du projet seulement
+      allow write: if isProjectCreator(projectId) &&
+                      isValidImageFile(10) && // Max 10MB par image
+                      // Limite du nombre d'images gérée côté application
+                      true;
+    }
+
+    // ============================================
+    // PROJECT DOCUMENTS
+    // Path: /projects/{projectId}/documents/{fileName}
+    // ============================================
+
+    match /projects/{projectId}/documents/{fileName} {
+      // Lecture : Public ou restreint selon config projet
+      // Pour MVP : public si projet live
+      allow read: if firestore.get(/databases/(default)/documents/projects/$(projectId)).data.status in ['live', 'funded', 'active', 'completed'];
+
+      // Écriture : Créateur du projet
+      allow write: if isProjectCreator(projectId) &&
+                      isDocumentFile() &&
+                      isValidSize(20); // Max 20MB pour documents
+    }
+
+    // ============================================
+    // PROJECT VIDEOS (optionnel)
+    // Path: /projects/{projectId}/videos/{fileName}
+    // ============================================
+
+    match /projects/{projectId}/videos/{fileName} {
+      // Lecture : Public si projet live
+      allow read: if firestore.get(/databases/(default)/documents/projects/$(projectId)).data.status in ['live', 'funded', 'active', 'completed'];
+
+      // Écriture : Créateur du projet
+      allow write: if isProjectCreator(projectId) &&
+                      isVideoFile() &&
+                      isValidSize(100); // Max 100MB pour vidéos
+    }
+
+    // ============================================
+    // MILESTONE EVIDENCE
+    // Path: /milestones/{milestoneId}/evidence/{fileName}
+    // ============================================
+
+    match /milestones/{milestoneId}/evidence/{fileName} {
+      // Lecture : Créateur du projet + Auditeur assigné + Admin
+      allow read: if isAdmin(); // Simplifié : admin peut tout voir
+                                 // TODO: Affiner avec lookup milestone → project → creator
+
+      // Écriture : Créateur du projet seulement
+      // Preuves de réalisation des milestones
+      allow write: if isAuthenticated() &&
+                      isCreator() &&
+                      (isImageFile() || isPDFFile() || isVideoFile()) &&
+                      isValidSize(50); // Max 50MB pour preuves
+    }
+
+    // ============================================
+    // AUDIT REPORTS
+    // Path: /audits/{auditId}/reports/{fileName}
+    // ============================================
+
+    match /audits/{auditId}/reports/{fileName} {
+      // Lecture : Auditeur qui a créé, créateur du projet, admin
+      allow read: if isAuditorForAudit(auditId) ||
+                     isProjectCreatorForAudit(auditId) ||
+                     isAdmin();
+
+      // Écriture : Auditeur assigné seulement
+      allow write: if isAuditorForAudit(auditId) &&
+                      (isPDFFile() || isDocumentFile()) &&
+                      isValidSize(20); // Max 20MB pour rapports
+    }
+
+    // ============================================
+    // AUDIT EVIDENCE (preuves collectées par l'auditeur)
+    // Path: /audits/{auditId}/evidence/{fileName}
+    // ============================================
+
+    match /audits/{auditId}/evidence/{fileName} {
+      // Lecture : Auditeur, créateur projet, admin
+      allow read: if isAuditorForAudit(auditId) ||
+                     isProjectCreatorForAudit(auditId) ||
+                     isAdmin();
+
+      // Écriture : Auditeur assigné seulement
+      allow write: if isAuditorForAudit(auditId) &&
+                      (isImageFile() || isPDFFile() || isVideoFile()) &&
+                      isValidSize(50); // Max 50MB pour preuves audit
+    }
+
+    // ============================================
+    // SYSTEM REPORTS (rapports générés automatiquement)
+    // Path: /reports/{reportType}/{year}/{month}/{fileName}
+    // ============================================
+
+    match /reports/{reportType}/{year}/{month}/{fileName} {
+      // Lecture : Admin seulement
+      allow read: if isAdmin();
+
+      // Écriture : Cloud Functions seulement (via service account)
+      // Pas accessible via client
+      allow write: if false;
+    }
+
+    // ============================================
+    // EXPORTS (exports de données utilisateur - GDPR)
+    // Path: /exports/{userId}/{exportId}/{fileName}
+    // ============================================
+
+    match /exports/{userId}/{exportId}/{fileName} {
+      // Lecture : Propriétaire seulement
+      // Exports générés suite à demande GDPR
+      allow read: if isOwner(userId);
+
+      // Écriture : Cloud Functions seulement
+      allow write: if false;
+    }
+
+    // ============================================
+    // TEMPORARY UPLOADS (uploads temporaires avant traitement)
+    // Path: /temp/{userId}/{uploadId}/{fileName}
+    // ============================================
+
+    match /temp/{userId}/{uploadId}/{fileName} {
+      // Lecture : Propriétaire seulement
+      allow read: if isOwner(userId);
+
+      // Écriture : Propriétaire seulement
+      // Fichiers temporaires, expiration gérée par Cloud Function
+      allow create: if isOwner(userId) &&
+                       isValidSize(100); // Max 100MB temporaire
+
+      // Mise à jour/Suppression : Propriétaire ou Cloud Function (cleanup)
+      allow update, delete: if isOwner(userId);
+    }
+
+    // ============================================
+    // MESSAGE ATTACHMENTS (pièces jointes messages - future)
+    // Path: /messages/{messageId}/attachments/{fileName}
+    // ============================================
+
+    match /messages/{messageId}/attachments/{fileName} {
+      // Lecture : Participants de la conversation
+      allow read: if isAuthenticated(); // TODO: Affiner avec lookup message
+
+      // Écriture : Expéditeur du message
+      allow write: if isAuthenticated() &&
+                      (isImageFile() || isDocumentFile()) &&
+                      isValidSize(25); // Max 25MB pour pièces jointes
+    }
+
+    // ============================================
+    // ADMIN UPLOADS (documents administratifs)
+    // Path: /admin/{category}/{fileName}
+    // ============================================
+
+    match /admin/{category}/{fileName} {
+      // Lecture : Admin seulement
+      allow read: if isAdmin();
+
+      // Écriture : Admin seulement
+      allow write: if isAdmin() &&
+                      isValidSize(50); // Max 50MB
+    }
+
+    // ============================================
+    // PUBLIC ASSETS (ressources publiques - logos, etc.)
+    // Path: /public/{assetType}/{fileName}
+    // ============================================
+
+    match /public/{assetType}/{fileName} {
+      // Lecture : Public (tous)
+      allow read: if true;
+
+      // Écriture : Admin seulement
+      allow write: if isAdmin() &&
+                      isValidSize(10); // Max 10MB
+    }
+
+    // ============================================
+    // BACKUPS (sauvegardes - usage interne)
+    // Path: /backups/{backupType}/{timestamp}/{fileName}
+    // ============================================
+
+    match /backups/{backupType}/{timestamp}/{fileName} {
+      // Lecture : Admin seulement
+      allow read: if isAdmin();
+
+      // Écriture : Cloud Functions seulement (via service account)
+      allow write: if false;
+    }
+
+    // ============================================
+    // RÈGLE PAR DÉFAUT : TOUT BLOQUER
+    // ============================================
+
+    // Tout chemin non explicitement autorisé est bloqué
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
