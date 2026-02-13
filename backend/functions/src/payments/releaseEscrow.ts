@@ -172,13 +172,15 @@ async function calculateEscrowReleases(
 ): Promise<{ contribution: ContributionDocument; releaseAmount: number }[]> {
   try {
     // Récupérer toutes les contributions confirmées avec escrow
-    const contributions = await firestoreHelper.queryDocuments<ContributionDocument>(
+    const contributionsResult = await firestoreHelper.queryDocuments<ContributionDocument>(
       `projects/${projectId}/contributions`,
       [
         ['status', '==', 'confirmed'],
         ['escrow.held', '==', true]
       ]
     );
+
+    const contributions = contributionsResult.data;
 
     if (contributions.length === 0) {
       logger.info('No contributions with held escrow found', { projectId, releaseType });

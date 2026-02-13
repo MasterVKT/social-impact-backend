@@ -199,9 +199,17 @@ export class PerformanceMonitor {
   private activeAlerts: Map<string, PerformanceAlert> = new Map();
   private eventBuffer: PerformanceEvent[] = [];
   private monitoringInterval: NodeJS.Timeout | null = null;
+  private initialized = false;
 
   constructor() {
-    this.initializePerformanceMonitoring();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializePerformanceMonitoring();
+      this.initialized = true;
+    }
   }
 
   async startTrace(
@@ -210,6 +218,7 @@ export class PerformanceMonitor {
     context: PerformanceEvent['context'],
     tags: Record<string, string> = {}
   ): Promise<string> {
+    await this.ensureInitialized();
     try {
       const profile = await this.getOrCreateProfile(profileName, type);
       
@@ -301,6 +310,18 @@ export class PerformanceMonitor {
       logger.error('Failed to finish performance trace', error as Error, { traceId });
       throw error;
     }
+  }
+
+  /**
+   * Alias pour finishTrace - pour compatibilité
+   */
+  async endTrace(
+    traceId: string,
+    status: PerformanceEvent['status'] = 'success',
+    errorMessage?: string,
+    additionalMetrics?: Partial<PerformanceEvent['metrics']>
+  ): Promise<PerformanceEvent> {
+    return this.finishTrace(traceId, status, errorMessage, additionalMetrics);
   }
 
   async createPerformanceProfile(profileData: Omit<PerformanceProfile, 'id' | 'metadata'>): Promise<PerformanceProfile> {
@@ -1329,8 +1350,18 @@ export class PerformanceMonitor {
   }
 }
 
-// Singleton instance
-export const performanceMonitor = new PerformanceMonitor();
+// Lazy singleton instance - only created when first accessed
+let _performanceMonitor: PerformanceMonitor | null = null;
+
+export function getPerformanceMonitor(): PerformanceMonitor {
+  if (!_performanceMonitor) {
+    _performanceMonitor = new PerformanceMonitor();
+  }
+  return _performanceMonitor;
+}
+
+// Backward compatible export - calls getter
+export const performanceMonitor = getPerformanceMonitor();
 
 // Helper functions for easy performance tracking
 export async function startPerformanceTrace(

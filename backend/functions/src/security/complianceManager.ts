@@ -161,7 +161,16 @@ export class ComplianceManager {
       }
     };
 
-    this.initializeComplianceManager();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private initialized = false;
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeComplianceManager();
+      this.initialized = true;
+    }
   }
 
   // GDPR Compliance Methods
@@ -179,6 +188,7 @@ export class ComplianceManager {
     violations: ComplianceViolation[];
     requirements: string[];
   }> {
+    await this.ensureInitialized();
     const violations: ComplianceViolation[] = [];
     const requirements: string[] = [];
 

@@ -383,7 +383,7 @@ async function notifyMilestoneUpdate(
         ]
       );
 
-      const uniqueContributors = new Set(contributorsQuery.map(c => c.contributorUid));
+      const uniqueContributors = new Set(contributorsQuery.data.map(c => c.contributorUid));
 
       logger.info('Milestone completion notifications would be sent', {
         projectId: project.uid,

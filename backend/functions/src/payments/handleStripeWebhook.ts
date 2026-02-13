@@ -19,27 +19,58 @@ import { STATUS, PAYMENT_CONFIG } from '../utils/constants';
  * Valide l'origine et la signature du webhook Stripe
  */
 function validateWebhookOrigin(req: Request): { isValid: boolean; event?: any } {
+  // ⭐ LOG: Tracer TOUTES les requêtes webhook entrantes
+  logger.info('Webhook request received', {
+    method: req.method,
+    hasSignature: !!req.get('stripe-signature'),
+    contentType: req.get('content-type'),
+    bodyType: typeof req.body,
+    timestamp: new Date().toISOString(),
+  });
+
   try {
     const sig = req.get('stripe-signature');
     if (!sig) {
+      logger.error('Missing stripe-signature header', {
+        headers: Object.keys(req.headers),
+        method: req.method,
+      });
       return { isValid: false };
     }
+
+    // ⭐ LOG: Tentative de vérification de signature
+    const webhookSecretConfigured = !!(process.env.STRIPE_WEBHOOK_SECRET && 
+      process.env.STRIPE_WEBHOOK_SECRET !== 'whsec_dummy_secret_for_emulator');
+    
+    logger.info('Verifying webhook signature', {
+      hasWebhookSecret: webhookSecretConfigured,
+      signatureLength: sig.length,
+      bodyType: typeof req.body,
+    });
 
     // Vérifier la signature Stripe
     const event = stripeService.constructWebhookEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET!);
     
+    // ⭐ LOG: Vérification réussie avec plus de détails
     logger.info('Stripe webhook signature validated', {
       eventType: event.type,
       eventId: event.id,
       created: event.created,
+      livemode: event.livemode,
+      apiVersion: event.api_version,
     });
 
     return { isValid: true, event };
 
   } catch (error) {
+    // ⭐ LOG: Erreur détaillée de vérification de signature
     logger.error('Invalid Stripe webhook signature', error, {
       hasSignature: !!req.get('stripe-signature'),
+      signatureValue: req.get('stripe-signature')?.substring(0, 20) + '...',
       bodyType: typeof req.body,
+      bodyLength: JSON.stringify(req.body).length,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
     });
     return { isValid: false };
   }
@@ -52,11 +83,15 @@ async function processPaymentIntentEvents(event: any): Promise<void> {
   const paymentIntent = event.data.object;
   const paymentIntentId = paymentIntent.id;
   
+  // ⭐ LOG: Traitement PaymentIntent avec métadonnées complètes
   logger.info('Processing PaymentIntent event', {
     eventType: event.type,
     paymentIntentId,
     status: paymentIntent.status,
     amount: paymentIntent.amount,
+    currency: paymentIntent.currency,
+    metadata: paymentIntent.metadata,
+    hasCharges: !!paymentIntent.charges?.data?.length,
   });
 
   try {
@@ -65,10 +100,16 @@ async function processPaymentIntentEvents(event: any): Promise<void> {
     const projectId = paymentIntent.metadata?.projectId;
     
     if (!contributionId || !projectId) {
+      // ⭐ LOG: Métadonnées manquantes - critique pour le debug
       logger.warn('PaymentIntent missing required metadata', {
         paymentIntentId,
         hasContributionId: !!contributionId,
         hasProjectId: !!projectId,
+        allMetadataKeys: Object.keys(paymentIntent.metadata || {}),
+        metadataValues: paymentIntent.metadata,
+        eventType: event.type,
+        amount: paymentIntent.amount,
+        status: paymentIntent.status,
       });
       return;
     }
@@ -121,11 +162,23 @@ async function handlePaymentSuccess(
   paymentIntent: any,
   event: any
 ): Promise<void> {
+  // ⭐ LOG: Début du traitement de paiement réussi
+  logger.info('Handling payment success', {
+    paymentIntentId: paymentIntent.id,
+    contributionId: contribution.id,
+    projectId: contribution.projectId,
+    contributorUid: contribution.contributorUid,
+    amount: paymentIntent.amount / 100,
+    currency: paymentIntent.currency,
+    currentStatus: contribution.status,
+  });
+
   try {
     if (contribution.status === 'confirmed') {
       logger.info('Contribution already confirmed, skipping', {
         contributionId: contribution.id,
         paymentIntentId: paymentIntent.id,
+        confirmedAt: contribution.confirmedAt,
       });
       return;
     }
@@ -133,6 +186,15 @@ async function handlePaymentSuccess(
     const chargeId = paymentIntent.charges?.data?.[0]?.id;
     const receiptUrl = paymentIntent.charges?.data?.[0]?.receipt_url;
     const transactionId = helpers.string.generateId('txn');
+
+    // ⭐ LOG: Préparation de la mise à jour Firestore
+    logger.info('Updating contribution document', {
+      contributionId: contribution.id,
+      projectId: contribution.projectId,
+      transactionId,
+      chargeId,
+      hasReceiptUrl: !!receiptUrl,
+    });
 
     // Mettre à jour la contribution
     await firestoreHelper.runTransaction(async (transaction) => {
@@ -186,9 +248,16 @@ async function handlePaymentSuccess(
     });
 
   } catch (error) {
+    // ⭐ LOG: Erreur détaillée avec contexte complet
     logger.error('Failed to handle payment success', error, {
       contributionId: contribution.id,
       paymentIntentId: paymentIntent.id,
+      projectId: contribution.projectId,
+      contributorUid: contribution.contributorUid,
+      amount: contribution.amount.gross,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
+      errorType: error instanceof Error ? error.constructor.name : typeof error,
     });
     throw error;
   }
@@ -695,8 +764,23 @@ async function processStripeWebhook(req: Request): Promise<PaymentsAPI.StripeWeb
  */
 export const handleStripeWebhook = https.onRequest(
   withErrorHandling(async (req: Request, res: Response): Promise<void> => {
+    // ⭐ LOG: Requête HTTP reçue sur le webhook
+    logger.info('Stripe webhook HTTP request received', {
+      method: req.method,
+      path: req.path,
+      hasSignature: !!req.get('stripe-signature'),
+      contentType: req.get('content-type'),
+      origin: req.get('origin'),
+      userAgent: req.get('user-agent'),
+      timestamp: new Date().toISOString(),
+    });
+
     // Vérifier la méthode HTTP
     if (req.method !== 'POST') {
+      logger.warn('Invalid HTTP method for webhook', {
+        method: req.method,
+        expectedMethod: 'POST',
+      });
       res.status(405).json({ error: 'Method not allowed' });
       return;
     }
@@ -711,6 +795,13 @@ export const handleStripeWebhook = https.onRequest(
     try {
       // Traiter le webhook
       const result = await processStripeWebhook(req);
+      
+      // ⭐ LOG: Webhook traité avec succès
+      logger.info('Stripe webhook processed successfully', {
+        eventType: originValidation.event?.type,
+        eventId: originValidation.event?.id,
+        processingTime: Date.now() - new Date(originValidation.event?.created * 1000).getTime(),
+      });
       
       // Répondre à Stripe
       res.status(200).json(result);

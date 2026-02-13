@@ -97,6 +97,7 @@ export interface UserRiskProfile {
     preferredPaymentMethods: string[];
     typicalTransactionTimes: number[];
     geolocationPatterns: string[];
+    transactionHistory: number; // Nombre total de transactions
   };
 }
 
@@ -141,10 +142,20 @@ export class FraudDetectionSystem {
       }
     };
 
-    this.initializeFraudDetection();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private initialized = false;
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeFraudDetection();
+      this.initialized = true;
+    }
   }
 
   async analyzeTransaction(context: TransactionContext): Promise<FraudAnalysisResult> {
+    await this.ensureInitialized();
     const startTime = Date.now();
     
     try {
@@ -741,19 +752,19 @@ export class FraudDetectionSystem {
 
   private async createUserRiskProfile(userId: string): Promise<UserRiskProfile> {
     // Analyze user's historical data
-    const userDoc = await firestoreHelper.getDocumentOptional('users', userId);
+    const userDoc = await firestoreHelper.getDocumentOptional<any>('users', userId);
     const transactions = await this.getAllUserTransactions(userId);
-    
-    const accountAge = userDoc?.createdAt 
-      ? (Date.now() - userDoc.createdAt.toDate().getTime()) / (1000 * 60 * 60 * 24)
+
+    const accountAge = userDoc?.createdAt
+      ? (Date.now() - userDoc.createdAt.toMillis()) / (1000 * 60 * 60 * 24)
       : 0;
 
     const historicalAnalysis = this.analyzeTransactionHistory(transactions);
-    
+
     const factors = {
       accountAge: Math.min(accountAge / 30, 100), // Normalize to 30 days = 100%
       transactionHistory: Math.min(transactions.length * 10, 100),
-      verificationLevel: userDoc?.kycStatus === 'approved' ? 100 : 0,
+      verificationLevel: userDoc?.kyc?.status === 'approved' ? 100 : 0,
       behavioralConsistency: 50, // Default until we have data
       networkReputation: 50 // Default
     };
@@ -838,21 +849,21 @@ export class FraudDetectionSystem {
     }, {} as Record<string, number>);
     
     const preferredPaymentMethods = Object.entries(methodCounts)
-      .sort(([,a], [,b]) => b - a)
+      .sort(([,a], [,b]) => (b as number) - (a as number))
       .slice(0, 3)
       .map(([method]) => method);
 
     const hours = transactions
       .map(tx => tx.createdAt?.toDate?.()?.getHours())
-      .filter(hour => hour !== undefined);
-    
+      .filter((hour): hour is number => hour !== undefined);
+
     const hourCounts = hours.reduce((acc, hour) => {
       acc[hour] = (acc[hour] || 0) + 1;
       return acc;
     }, {} as Record<number, number>);
-    
+
     const typicalTransactionTimes = Object.entries(hourCounts)
-      .filter(([, count]) => count >= Math.max(1, transactions.length * 0.1))
+      .filter(([, count]) => (count as number) >= Math.max(1, transactions.length * 0.1))
       .map(([hour]) => parseInt(hour));
 
     const countries = transactions

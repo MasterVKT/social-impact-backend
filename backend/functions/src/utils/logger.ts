@@ -309,6 +309,18 @@ class Logger {
   }
 
   /**
+   * Log spécifique pour les transactions financières
+   */
+  public financial(message: string, data?: any, context?: LogContext): void {
+    const financialContext = {
+      ...context,
+      category: 'financial',
+      sensitive: true
+    };
+    this.emit(this.createLogEntry(LogLevel.INFO, `[FINANCIAL] ${message}`, data, undefined, financialContext));
+  }
+
+  /**
    * Log avec mesure de performance automatique
    */
   public withPerformance<T>(
@@ -543,8 +555,4 @@ export const functionsLogger = {
   },
 };
 
-/**
- * Types exportés pour utilisation externe
- */
-export type { LogContext, LogEntry };
-export { LogLevel };
+// Types déjà exportés ci-dessus

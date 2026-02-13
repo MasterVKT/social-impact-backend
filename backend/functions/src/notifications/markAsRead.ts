@@ -190,7 +190,7 @@ async function markAllNotificationsAsRead(
       { limit: NOTIFICATION_CONFIG.MAX_BULK_READ_OPERATIONS }
     );
 
-    if (unreadNotifications.length === 0) {
+    if (unreadNotifications.data.length === 0) {
       logger.info('No unread notifications found to mark as read', { uid, filters });
       return { marked: 0, readAt: now.toISOString() };
     }
@@ -199,8 +199,8 @@ async function markAllNotificationsAsRead(
     const batchSize = 25;
     let totalMarked = 0;
 
-    for (let i = 0; i < unreadNotifications.length; i += batchSize) {
-      const batch = unreadNotifications.slice(i, i + batchSize);
+    for (let i = 0; i < unreadNotifications.data.length; i += batchSize) {
+      const batch = unreadNotifications.data.slice(i, i + batchSize);
       
       try {
         await firestoreHelper.runTransaction(async (transaction) => {
@@ -250,7 +250,7 @@ async function markAllNotificationsAsRead(
     }
 
     // Si on a atteint la limite, signaler qu'il pourrait y en avoir plus
-    if (unreadNotifications.length === NOTIFICATION_CONFIG.MAX_BULK_READ_OPERATIONS) {
+    if (unreadNotifications.data.length === NOTIFICATION_CONFIG.MAX_BULK_READ_OPERATIONS) {
       logger.warn('Maximum bulk read limit reached, some notifications may remain unread', {
         uid,
         processedCount: totalMarked,

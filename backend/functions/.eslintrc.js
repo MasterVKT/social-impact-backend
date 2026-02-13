@@ -6,8 +6,8 @@ module.exports = {
   },
   extends: [
     'eslint:recommended',
-    '@typescript-eslint/recommended',
-    '@typescript-eslint/recommended-requiring-type-checking',
+    'plugin:@typescript-eslint/recommended',
+    'plugin:@typescript-eslint/recommended-requiring-type-checking',
   ],
   parser: '@typescript-eslint/parser',
   parserOptions: {
@@ -23,6 +23,14 @@ module.exports = {
     'import',
   ],
   rules: {
+    // TypeScript strictness rules - relaxed for Firebase Functions where many SDKs use `any`
+    '@typescript-eslint/no-unsafe-assignment': 'off',
+    '@typescript-eslint/no-unsafe-member-access': 'off',
+    '@typescript-eslint/no-unsafe-call': 'off',
+    '@typescript-eslint/no-unsafe-argument': 'off',
+    '@typescript-eslint/no-unsafe-return': 'off',
+    '@typescript-eslint/no-explicit-any': 'off',
+
     '@typescript-eslint/adjacent-overload-signatures': 'error',
     '@typescript-eslint/no-empty-function': 'error',
     '@typescript-eslint/no-empty-interface': 'warn',
@@ -70,5 +78,6 @@ module.exports = {
     'radix': 'error',
     'use-isnan': 'error',
     'valid-typeof': 'off', // This is covered by TypeScript compiler
+    'no-case-declarations': 'off',
   },
 };

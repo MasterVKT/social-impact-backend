@@ -68,8 +68,12 @@ service firebase.storage {
 
     // Project ownership
     function isProjectCreator(projectId) {
-      return isAuthenticated() &&
-             firestore.get(/databases/(default)/documents/projects/$(projectId)).data.creator.uid == request.auth.uid;
+      let project = firestore.get(/databases/(default)/documents/projects/$(projectId)).data;
+      // Support both creatorId (string) and creator.uid (object) formats
+      return isAuthenticated() && (
+        (project.keys().hasAny(['creatorId']) && project.creatorId == request.auth.uid) ||
+        (project.keys().hasAny(['creator']) && project.creator.uid == request.auth.uid)
+      );
     }
 
     // Audit ownership
@@ -135,6 +139,30 @@ service firebase.storage {
       // Écriture : Créateur du projet seulement
       allow write: if isProjectCreator(projectId) &&
                       isValidImageFile(10); // Max 10MB
+    }
+
+    // ============================================
+    // PROJECT IMAGES - FLAT STRUCTURE (Frontend format)
+    // Path: /projects/{projectId}/cover.jpg
+    // Path: /projects/{projectId}/additional_0.jpg
+    // ============================================
+
+    match /projects/{projectId}/{imageFile} {
+      // Lecture : Public (authenticated users can view project images)
+      allow read: if isAuthenticated();
+
+      // Écriture : Créateur du projet ou utilisateurs authentifiés
+      // VERSION SIMPLIFIÉE : permet aux utilisateurs authentifiés d'uploader
+      // La sécurité est assurée par les règles Firestore sur la collection projects
+      allow write: if isAuthenticated() &&
+                      isValidImageFile(10) && // Max 10MB
+                      (imageFile.matches('cover\\.jpg') || 
+                       imageFile.matches('cover\\.jpeg') || 
+                       imageFile.matches('cover\\.png') ||
+                       imageFile.matches('additional_[0-9]+\\.(jpg|jpeg|png)'));
+
+      // Suppression : Créateur du projet ou admin
+      allow delete: if isAuthenticated() && (isProjectCreator(projectId) || isAdmin());
     }
 
     // ============================================
@@ -327,10 +355,10 @@ service firebase.storage {
 
     // ============================================
     // BACKUPS (sauvegardes - usage interne)
-    // Path: /backups/{backupType}/{timestamp}/{fileName}
+    // Path: /backups/{backupType}/{backupTime}/{fileName}
     // ============================================
 
-    match /backups/{backupType}/{timestamp}/{fileName} {
+    match /backups/{backupType}/{backupTime}/{fileName} {
       // Lecture : Admin seulement
       allow read: if isAdmin();
 

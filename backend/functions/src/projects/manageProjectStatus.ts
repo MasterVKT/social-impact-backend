@@ -514,13 +514,13 @@ async function notifyContributorsOfStatusChange(
       ]
     );
 
-    const uniqueContributors = new Set(contributions.map(c => c.contributorUid));
+    const uniqueContributors = new Set(contributions.data.map(c => c.contributorUid));
 
     logger.info('Contributor status change notifications would be sent', {
       projectId: project.uid,
       action,
       contributorsToNotify: uniqueContributors.size,
-      totalContributions: contributions.length
+      totalContributions: contributions.data.length
     });
 
     // TODO: Implémenter les notifications aux contributeurs

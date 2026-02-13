@@ -235,7 +235,7 @@ async function getUnreadCount(uid: string, filters?: any): Promise<number> {
       { limit: NOTIFICATION_CONFIG.MAX_UNREAD_COUNT }
     );
 
-    return Math.min(unreadNotifications.length, NOTIFICATION_CONFIG.MAX_UNREAD_COUNT);
+    return Math.min(unreadNotifications.data.length, NOTIFICATION_CONFIG.MAX_UNREAD_COUNT);
 
   } catch (error) {
     logger.error('Failed to get unread count', error, { uid });
@@ -298,12 +298,12 @@ async function cleanupExpiredNotifications(uid: string): Promise<void> {
       { limit: 50 }
     );
 
-    if (expiredNotifications.length === 0) {
+    if (expiredNotifications.data.length === 0) {
       return;
     }
 
     // Marquer comme expirées en lot
-    const updatePromises = expiredNotifications.map(notification =>
+    const updatePromises = expiredNotifications.data.map(notification =>
       firestoreHelper.updateDocument('notifications', notification.id, {
         expired: true,
         expiredAt: now,
@@ -316,13 +316,13 @@ async function cleanupExpiredNotifications(uid: string): Promise<void> {
 
     // Mettre à jour le compteur utilisateur
     await firestoreHelper.updateDocument('users', uid, {
-      'notificationCounters.unread': firestoreHelper.increment(-expiredNotifications.length),
-      'notificationCounters.expired': firestoreHelper.increment(expiredNotifications.length),
+      'notificationCounters.unread': firestoreHelper.increment(-expiredNotifications.data.length),
+      'notificationCounters.expired': firestoreHelper.increment(expiredNotifications.data.length),
     });
 
     logger.info('Expired notifications cleaned up', {
       uid,
-      expiredCount: expiredNotifications.length,
+      expiredCount: expiredNotifications.data.length,
     });
 
   } catch (error) {
@@ -367,15 +367,15 @@ async function executeGetNotifications(
   ]);
   
   // Enrichissement des notifications
-  const enrichedNotifications = await enrichNotifications(notifications);
-  
+  const enrichedNotifications = await enrichNotifications(notifications.data);
+
   // Mise à jour des métriques d'engagement
-  await updateNotificationEngagementMetrics(uid, notifications.length, unreadCount);
-  
+  await updateNotificationEngagementMetrics(uid, notifications.data.length, unreadCount);
+
   // Log business
   logger.business('Notifications retrieved', 'notifications', {
     recipientUid: uid,
-    notificationsReturned: notifications.length,
+    notificationsReturned: notifications.data.length,
     unreadCount,
     filters: {
       unreadOnly: data.unreadOnly,
@@ -392,8 +392,8 @@ async function executeGetNotifications(
   return {
     unreadCount,
     notifications: enrichedNotifications,
-    hasMore: notifications.length === data.limit,
-    totalCount: unreadCount + (data.unreadOnly ? 0 : notifications.length),
+    hasMore: notifications.data.length === data.limit,
+    totalCount: unreadCount + (data.unreadOnly ? 0 : notifications.data.length),
     filters: {
       unreadOnly: data.unreadOnly,
       types: data.types,
@@ -406,7 +406,7 @@ async function executeGetNotifications(
     pagination: {
       limit: data.limit,
       offset: data.offset,
-      nextOffset: data.offset + notifications.length
+      nextOffset: data.offset + notifications.data.length
     }
   };
 }

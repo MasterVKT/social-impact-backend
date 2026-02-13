@@ -86,11 +86,11 @@ async function getEligibleProjects(): Promise<ProjectDocument[]> {
     );
 
     logger.info('Eligible projects for trending analysis retrieved', {
-      totalProjects: activeProjects.length,
+      totalProjects: activeProjects.data.length,
       maxAnalysisLimit: TRENDING_CONFIG.MAX_PROJECTS_TO_ANALYZE
     });
 
-    return activeProjects;
+    return activeProjects.data;
 
   } catch (error) {
     logger.error('Failed to get eligible projects for trending analysis', error);
@@ -129,12 +129,12 @@ async function calculateProjectMetrics(project: ProjectDocument): Promise<Projec
     ]);
 
     // Métriques de base
-    const contributionsCount = recentContributions.length;
-    const contributionsAmount = recentContributions.reduce((sum, contrib) => sum + contrib.amount, 0);
-    const uniqueContributors = new Set(recentContributions.map(contrib => contrib.contributorUid)).size;
+    const contributionsCount = recentContributions.data.length;
+    const contributionsAmount = recentContributions.data.reduce((sum, contrib) => sum + contrib.amount, 0);
+    const uniqueContributors = new Set(recentContributions.data.map(contrib => contrib.contributorUid)).size;
 
     // Calcul du taux de croissance
-    const previousAmount = previousContributions.reduce((sum, contrib) => sum + contrib.amount, 0);
+    const previousAmount = previousContributions.data.reduce((sum, contrib) => sum + contrib.amount, 0);
     const growthRate = previousAmount > 0 
       ? ((contributionsAmount - previousAmount) / previousAmount) * 100
       : contributionsAmount > 0 ? 100 : 0;
@@ -148,7 +148,7 @@ async function calculateProjectMetrics(project: ProjectDocument): Promise<Projec
       const slotStart = new Date(analysisWindow.getTime() + i * slotDuration);
       const slotEnd = new Date(slotStart.getTime() + slotDuration);
       
-      const slotContributions = recentContributions.filter(contrib => 
+      const slotContributions = recentContributions.data.filter(contrib =>
         contrib.confirmedAt >= slotStart && contrib.confirmedAt < slotEnd
       );
       
@@ -251,7 +251,7 @@ async function calculateSocialEngagement(projectId: string, since: Date): Promis
       share: 5
     };
 
-    const engagementScore = engagementEvents.reduce((score, event) => {
+    const engagementScore = engagementEvents.data.reduce((score, event) => {
       const weight = weights[event.eventType as keyof typeof weights] || 1;
       return score + weight;
     }, 0);
@@ -281,15 +281,15 @@ async function getCategoryRanking(projectId: string, category: string): Promise<
       { orderBy: [{ field: 'currentFunding', direction: 'desc' }] }
     );
 
-    const projectIndex = categoryProjects.findIndex(p => p.id === projectId);
-    
+    const projectIndex = categoryProjects.data.findIndex(p => p.id === projectId);
+
     if (projectIndex === -1) {
       return 0;
     }
 
     // Convertir le rang en score (1er = 100, dernier = 0)
     const rank = projectIndex + 1;
-    const totalProjects = categoryProjects.length;
+    const totalProjects = categoryProjects.data.length;
     
     return Math.round(((totalProjects - rank + 1) / totalProjects) * 100);
 
@@ -428,8 +428,8 @@ async function updateGlobalTrendingRankings(): Promise<TrendingData[]> {
     const categoryRanks = new Map<string, number>();
 
     // Créer les données de tendance et mettre à jour les rangs
-    for (let i = 0; i < allProjects.length; i++) {
-      const project = allProjects[i];
+    for (let i = 0; i < allProjects.data.length; i++) {
+      const project = allProjects.data[i];
       const globalRank = i + 1;
 
       // Calculer le rang dans la catégorie
@@ -472,7 +472,7 @@ async function updateGlobalTrendingRankings(): Promise<TrendingData[]> {
     // Sauvegarder le classement global
     await firestoreHelper.setDocument('platform_data', 'trending_projects', {
       lastUpdated: new Date(),
-      totalProjects: allProjects.length,
+      totalProjects: allProjects.data.length,
       analysisWindow: TRENDING_CONFIG.ANALYSIS_WINDOW_HOURS,
       topTrending: trendingData.slice(0, TRENDING_CONFIG.TOP_TRENDING_COUNT),
       byCategory: Object.fromEntries(
@@ -496,7 +496,7 @@ async function updateGlobalTrendingRankings(): Promise<TrendingData[]> {
     });
 
     logger.info('Global trending rankings updated', {
-      totalProjects: allProjects.length,
+      totalProjects: allProjects.data.length,
       categoriesUpdated: categoryRanks.size,
       topScore: trendingData[0]?.trendingScore || 0,
       topProject: trendingData[0]?.title || 'N/A'
@@ -534,22 +534,22 @@ async function updateCategoryTrends(): Promise<Record<string, any>> {
           }
         );
 
-        if (categoryProjects.length === 0) {
+        if (categoryProjects.data.length === 0) {
           continue;
         }
 
         // Calculer les statistiques de la catégorie
-        const totalFunding = categoryProjects.reduce((sum, p) => sum + p.currentFunding, 0);
-        const avgScore = categoryProjects.reduce((sum, p) => sum + (p.trendingScore || 0), 0) / categoryProjects.length;
-        const avgGrowth = categoryProjects.reduce((sum, p) => sum + (p.trendingData?.growthRate || 0), 0) / categoryProjects.length;
-        
+        const totalFunding = categoryProjects.data.reduce((sum, p) => sum + p.currentFunding, 0);
+        const avgScore = categoryProjects.data.reduce((sum, p) => sum + (p.trendingScore || 0), 0) / categoryProjects.data.length;
+        const avgGrowth = categoryProjects.data.reduce((sum, p) => sum + (p.trendingData?.growthRate || 0), 0) / categoryProjects.data.length;
+
         // Identifier les projets en forte croissance
-        const risingProjects = categoryProjects.filter(p => p.trendingTrend === 'rising').length;
-        const stableProjects = categoryProjects.filter(p => p.trendingTrend === 'stable').length;
-        const fallingProjects = categoryProjects.filter(p => p.trendingTrend === 'falling').length;
+        const risingProjects = categoryProjects.data.filter(p => p.trendingTrend === 'rising').length;
+        const stableProjects = categoryProjects.data.filter(p => p.trendingTrend === 'stable').length;
+        const fallingProjects = categoryProjects.data.filter(p => p.trendingTrend === 'falling').length;
 
         categoryTrends[category] = {
-          totalProjects: categoryProjects.length,
+          totalProjects: categoryProjects.data.length,
           totalFunding,
           averageScore: Math.round(avgScore),
           averageGrowthRate: Math.round(avgGrowth * 100) / 100,
@@ -558,7 +558,7 @@ async function updateCategoryTrends(): Promise<Record<string, any>> {
             stable: stableProjects,
             falling: fallingProjects
           },
-          topProjects: categoryProjects.slice(0, 5).map(p => ({
+          topProjects: categoryProjects.data.slice(0, 5).map(p => ({
             projectId: p.id,
             title: p.title,
             score: p.trendingScore,

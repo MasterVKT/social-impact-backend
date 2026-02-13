@@ -67,11 +67,11 @@ async function getScheduledRefunds(): Promise<ScheduledRefundRequest[]> {
     );
 
     logger.info('Scheduled refunds retrieved', {
-      totalFound: scheduledRefunds.length,
+      totalFound: scheduledRefunds.data.length,
       maxBatchSize: REFUND_CONFIG.MAX_BATCH_SIZE
     });
 
-    return scheduledRefunds;
+    return scheduledRefunds.data;
 
   } catch (error) {
     logger.error('Failed to get scheduled refunds', error);
@@ -197,8 +197,8 @@ async function processStripeRefund(
         { limit: 1 }
       );
 
-      if (escrowRecord.length > 0) {
-        refundAmount += escrowRecord[0].accruedInterest || 0;
+      if (escrowRecord.data.length > 0) {
+        refundAmount += escrowRecord.data[0].accruedInterest || 0;
       }
     }
 
@@ -350,8 +350,8 @@ async function updateRecordsAfterRefund(
         { limit: 1 }
       );
 
-      if (escrowRecords.length > 0) {
-        const escrowRef = firestoreHelper.getDocumentRef('escrow_records', escrowRecords[0].id);
+      if (escrowRecords.data.length > 0) {
+        const escrowRef = firestoreHelper.getDocumentRef('escrow_records', escrowRecords.data[0].id);
         transaction.update(escrowRef, {
           status: 'refunded',
           refundedAt: new Date(),
@@ -522,12 +522,12 @@ async function processSingleRefund(refundRequest: ScheduledRefundRequest): Promi
         { limit: 1 }
       );
 
-      if (escrowRecord.length > 0 && escrowRecord[0].accruedInterest > 0) {
-        refundAmount += escrowRecord[0].accruedInterest;
+      if (escrowRecord.data.length > 0 && escrowRecord.data[0].accruedInterest > 0) {
+        refundAmount += escrowRecord.data[0].accruedInterest;
         logger.info('Interest included in refund', {
           refundId: refundRequest.id,
           originalAmount: contribution.amount,
-          interestAmount: escrowRecord[0].accruedInterest,
+          interestAmount: escrowRecord.data[0].accruedInterest,
           totalRefund: refundAmount
         });
       }
@@ -746,7 +746,7 @@ async function validateRefundIntegrity(results: RefundProcessingResults): Promis
       ])
     ]);
 
-    const calculatedRefundTotal = totalRefunds.reduce((sum, refund) => sum + refund.refundAmount, 0);
+    const calculatedRefundTotal = totalRefunds.data.reduce((sum, refund) => sum + refund.refundAmount, 0);
     const recordedRefundTotal = platformStats?.refunds?.totalAmountRefunded || 0;
 
     // Vérifier les écarts
@@ -757,7 +757,7 @@ async function validateRefundIntegrity(results: RefundProcessingResults): Promis
         recordedTotal: recordedRefundTotal,
         calculatedTotal: calculatedRefundTotal,
         discrepancy,
-        refundsChecked: totalRefunds.length,
+        refundsChecked: totalRefunds.data.length,
         processingResults: results
       });
 
@@ -786,7 +786,7 @@ async function validateRefundIntegrity(results: RefundProcessingResults): Promis
     }
 
     logger.info('Refund integrity validation completed', {
-      refundsValidated: totalRefunds.length,
+      refundsValidated: totalRefunds.data.length,
       calculatedTotal: calculatedRefundTotal,
       recordedTotal: recordedRefundTotal,
       discrepancy,

@@ -70,6 +70,7 @@ export class ThreatDetectionSystem {
   private ipAttempts: Map<string, Array<{ timestamp: Date; endpoint: string }>> = new Map();
   private blockedIPs: Set<string> = new Set();
   private suspiciousPatterns: Map<string, number> = new Map();
+  private initialized = false;
 
   constructor(config?: Partial<ThreatDetectionConfig>) {
     this.config = {
@@ -98,7 +99,14 @@ export class ThreatDetectionSystem {
       }
     };
 
-    this.initializeThreatDetection();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeThreatDetection();
+      this.initialized = true;
+    }
   }
 
   async detectThreats(request: {
@@ -116,6 +124,7 @@ export class ThreatDetectionSystem {
     threats: ThreatEvent[];
     riskScore: number;
   }> {
+    await this.ensureInitialized();
     const startTime = Date.now();
     const threats: ThreatEvent[] = [];
     let maxThreatLevel: 'none' | 'low' | 'medium' | 'high' | 'critical' = 'none';

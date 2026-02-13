@@ -4,11 +4,12 @@
  */
 
 import { firestore } from 'firebase-functions';
+import { Timestamp } from 'firebase-admin/firestore';
 import { logger } from '../utils/logger';
 import { firestoreHelper } from '../utils/firestore';
 import { emailService } from '../integrations/sendgrid/emailService';
 import { UserDocument, ProjectDocument, NotificationDocument } from '../types/firestore';
-import { STATUS, PROJECT_CONFIG } from '../utils/constants';
+import { STATUS, USER_PERMISSIONS } from '../utils/constants';
 import { helpers } from '../utils/helpers';
 
 /**
@@ -40,7 +41,7 @@ function analyzeProjectChanges(
     fundingChanged: beforeData.currentFunding !== afterData.currentFunding,
     milestoneChanged: beforeData.currentMilestone !== afterData.currentMilestone,
     descriptionChanged: beforeData.description !== afterData.description,
-    deadlineChanged: beforeData.deadline?.getTime() !== afterData.deadline?.getTime(),
+    deadlineChanged: beforeData.deadline?.toMillis() !== afterData.deadline?.toMillis(),
     goalChanged: beforeData.fundingGoal !== afterData.fundingGoal
   };
 
@@ -147,7 +148,7 @@ async function notifyContributors(
             currentFunding: project.currentFunding,
             fundingGoal: project.fundingGoal,
             fundingPercentage: Math.round((project.currentFunding / project.fundingGoal) * 100),
-            deadline: project.deadline?.toISOString()
+            deadline: project.deadline?.toDate().toISOString()
           },
           priority,
           actionUrl: `${process.env.FRONTEND_URL}/projects/${project.slug}`,
@@ -155,17 +156,18 @@ async function notifyContributors(
           read: false,
           readAt: null,
           delivered: true,
-          deliveredAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          version: 1
-        } as NotificationDocument);
+          deliveredAt: Timestamp.now(),
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+          version: 1,
+          autoDelete: false
+        } as unknown as NotificationDocument);
 
         // Mettre à jour le compteur du contributeur
         await firestoreHelper.updateDocument('users', contributorUid, {
           'notificationCounters.unread': firestoreHelper.increment(1),
           'notificationCounters.total': firestoreHelper.increment(1),
-          'notificationCounters.lastNotificationAt': new Date()
+          'notificationCounters.lastNotificationAt': Timestamp.now()
         });
 
         return notificationId;
@@ -220,10 +222,10 @@ async function updateProjectMetrics(
       if (changes.newStatus === STATUS.PROJECT.COMPLETED) {
         metricsUpdate['projects.completed.total'] = 1;
         metricsUpdate[`projects.completed.byCategory.${project.category}`] = 1;
-        
+
         // Calculer le temps de completion
         const completionDays = Math.ceil(
-          (new Date().getTime() - project.createdAt.getTime()) / (24 * 60 * 60 * 1000)
+          (Date.now() - project.createdAt.toMillis()) / (24 * 60 * 60 * 1000)
         );
         metricsUpdate['projects.averageCompletionTime'] = completionDays;
       }
@@ -305,7 +307,7 @@ async function handleFundingMilestones(
         projectId: project.id,
         type: 'funding_milestone',
         title: `${milestone}% de financement atteint`,
-        description: milestone === 100 
+        description: milestone === 100
           ? 'Félicitations ! Le projet est entièrement financé.'
           : `Le projet a atteint ${milestone}% de son objectif de financement.`,
         data: {
@@ -315,7 +317,7 @@ async function handleFundingMilestones(
           percentage: fundingPercentage,
           contributorCount: project.contributors?.length || 0
         },
-        createdAt: new Date(),
+        createdAt: Timestamp.now(),
         createdBy: 'system'
       });
 
@@ -349,8 +351,8 @@ async function handleFullyFundedProject(project: ProjectDocument): Promise<void>
     // Marquer le projet comme entièrement financé
     await firestoreHelper.updateDocument('projects', project.id, {
       fundingStatus: 'fully_funded',
-      fullyFundedAt: new Date(),
-      updatedAt: new Date()
+      fullyFundedAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
     });
 
     // Déclencher le processus d'assignation d'auditeur
@@ -377,11 +379,12 @@ async function handleFullyFundedProject(project: ProjectDocument): Promise<void>
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    } as NotificationDocument);
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as NotificationDocument);
 
     // Mettre à jour le compteur du créateur
     await firestoreHelper.updateDocument('users', project.creatorUid, {
@@ -421,7 +424,7 @@ async function initiateAuditAssignment(project: ProjectDocument): Promise<void> 
       complexity: calculateProjectComplexity(project),
       requiredQualifications: getRequiredAuditQualifications(project),
       deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 jours
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
       createdBy: 'system'
     });
 
@@ -448,7 +451,7 @@ function calculateProjectComplexity(project: ProjectDocument): 'low' | 'medium' 
   if (project.currentFunding > 100000) complexityScore += 1; // > €1000
   if (project.contributors && project.contributors.length > 50) complexityScore += 1;
   if (project.milestones && project.milestones.length > 5) complexityScore += 1;
-  if (project.category === 'technology' || project.category === 'research') complexityScore += 1;
+  if (project.category === 'technology' || project.category === 'health') complexityScore += 1;
   if (project.internationalScope) complexityScore += 1;
 
   if (complexityScore >= 5) return 'high';
@@ -463,7 +466,8 @@ function getRequiredAuditQualifications(project: ProjectDocument): string[] {
   const qualifications = ['basic_audit'];
 
   // Qualifications selon la catégorie
-  switch (project.category) {
+  const category = project.category as string;
+  switch (category) {
     case 'environment':
       qualifications.push('environmental_assessment', 'sustainability_metrics');
       break;
@@ -549,7 +553,7 @@ async function handleProjectCancellation(project: ProjectDocument): Promise<void
         status: 'pending_processing',
         contributorCount: project.contributors?.length || 0,
         requestedBy: 'system',
-        createdAt: new Date(),
+        createdAt: Timestamp.now(),
         priority: 'high'
       });
     }
@@ -559,7 +563,7 @@ async function handleProjectCancellation(project: ProjectDocument): Promise<void
       const updatePromises = project.contributors.map(contributorUid =>
         firestoreHelper.updateDocument(`projects/${project.id}/contributions`, contributorUid, {
           refundStatus: 'pending',
-          refundRequestedAt: new Date()
+          refundRequestedAt: Timestamp.now()
         })
       );
       
@@ -595,7 +599,7 @@ async function handleProjectSuspension(project: ProjectDocument): Promise<void> 
       title: `Projet suspendu: ${project.title}`,
       description: 'Ce ticket a été créé automatiquement suite à la suspension du projet.',
       assignedTo: null,
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
       autoGenerated: true
     });
 
@@ -618,7 +622,7 @@ async function handleProjectCompletion(project: ProjectDocument): Promise<void> 
     const impactMetrics = {
       totalFunding: project.currentFunding,
       contributorCount: project.contributors?.length || 0,
-      duration: Math.ceil((new Date().getTime() - project.createdAt.getTime()) / (24 * 60 * 60 * 1000)),
+      duration: Math.ceil((Date.now() - project.createdAt.toMillis()) / (24 * 60 * 60 * 1000)),
       category: project.category,
       impactScore: calculateImpactScore(project)
     };
@@ -628,7 +632,7 @@ async function handleProjectCompletion(project: ProjectDocument): Promise<void> 
       projectId: project.id,
       metrics: impactMetrics,
       status: 'completed',
-      generatedAt: new Date(),
+      generatedAt: Timestamp.now(),
       version: 1
     });
 
@@ -653,7 +657,7 @@ async function handleProjectUnderReview(project: ProjectDocument): Promise<void>
     // Suspendre temporairement les nouvelles contributions
     await firestoreHelper.updateDocument('projects', project.id, {
       acceptingContributions: false,
-      reviewStartedAt: new Date()
+      reviewStartedAt: Timestamp.now()
     });
 
     // Notifier les modérateurs
@@ -665,7 +669,7 @@ async function handleProjectUnderReview(project: ProjectDocument): Promise<void>
       ]
     );
 
-    const moderatorNotificationPromises = moderators.map(async (moderator) => {
+    const moderatorNotificationPromises = moderators.data.map(async (moderator) => {
       const notificationId = helpers.string.generateId('notif');
       return firestoreHelper.setDocument('notifications', notificationId, {
         id: notificationId,
@@ -686,18 +690,19 @@ async function handleProjectUnderReview(project: ProjectDocument): Promise<void>
         read: false,
         readAt: null,
         delivered: true,
-        deliveredAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        version: 1
-      });
+        deliveredAt: Timestamp.now(),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+        version: 1,
+        autoDelete: false
+      } as unknown as NotificationDocument);
     });
 
     await Promise.allSettled(moderatorNotificationPromises);
 
     logger.info('Project under review handled', {
       projectId: project.id,
-      moderatorsNotified: moderators.length
+      moderatorsNotified: moderators.data.length
     });
 
   } catch (error) {
@@ -721,7 +726,7 @@ function calculateImpactScore(project: ProjectDocument): number {
   score += engagementScore;
 
   // Score basé sur la rapidité de financement (max 20 points)
-  const daysSinceCreation = (new Date().getTime() - project.createdAt.getTime()) / (24 * 60 * 60 * 1000);
+  const daysSinceCreation = (Date.now() - project.createdAt.toMillis()) / (24 * 60 * 60 * 1000);
   const speedScore = Math.max(20 - (daysSinceCreation / 30) * 20, 0);
   score += speedScore;
 
@@ -761,9 +766,9 @@ async function processContributorRewards(project: ProjectDocument): Promise<void
           description: 'Récompense pour contribution précoce',
           value: 500, // €5.00 en centimes
           status: 'pending',
-          eligibleAt: new Date(),
-          expiresAt: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 jours
-          createdAt: new Date()
+          eligibleAt: Timestamp.now(),
+          expiresAt: Timestamp.fromMillis(Date.now() + 90 * 24 * 60 * 60 * 1000), // 90 jours
+          createdAt: Timestamp.now()
         });
 
         // Notifier le contributeur
@@ -787,11 +792,12 @@ async function processContributorRewards(project: ProjectDocument): Promise<void
           read: false,
           readAt: null,
           delivered: true,
-          deliveredAt: new Date(),
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          version: 1
-        });
+          deliveredAt: Timestamp.now(),
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+          version: 1,
+          autoDelete: false
+        } as unknown as NotificationDocument);
 
         await firestoreHelper.updateDocument('users', contributorUid, {
           'notificationCounters.unread': firestoreHelper.increment(1),
@@ -843,7 +849,7 @@ async function updateProjectSearchIndex(project: ProjectDocument): Promise<void>
       contributorCount: project.contributors?.length || 0,
       urgency: project.urgency,
       creatorUid: project.creatorUid,
-      lastUpdated: new Date(),
+      lastUpdated: Timestamp.now(),
       searchKeywords: generateSearchKeywords(project)
     };
 
@@ -885,9 +891,13 @@ function generateSearchKeywords(project: ProjectDocument): string[] {
 
   // Localisation
   if (project.location) {
-    project.location.toLowerCase().split(/\s+/).forEach(word => {
-      if (word.length > 2) keywords.add(word);
-    });
+    keywords.add(project.location.country.toLowerCase());
+    if (project.location.region) {
+      keywords.add(project.location.region.toLowerCase());
+    }
+    if (project.location.city) {
+      keywords.add(project.location.city.toLowerCase());
+    }
   }
 
   // Statuts
@@ -943,8 +953,8 @@ export const onProjectUpdate = firestore
       }
 
       // Log security pour statuts critiques
-      if (changes.statusChanged && 
-          [STATUS.PROJECT.CANCELLED, STATUS.PROJECT.SUSPENDED, STATUS.PROJECT.UNDER_REVIEW].includes(changes.newStatus!)) {
+      if (changes.statusChanged && changes.newStatus &&
+          [STATUS.PROJECT.CANCELLED, STATUS.PROJECT.SUSPENDED, STATUS.PROJECT.UNDER_REVIEW].includes(changes.newStatus as any)) {
         logger.security('Critical project status change', 'medium', {
           projectId,
           projectTitle: afterData.title,
@@ -959,7 +969,7 @@ export const onProjectUpdate = firestore
       logger.info('Project update trigger completed successfully', {
         projectId,
         changes,
-        processingTime: Date.now() - new Date(afterData.updatedAt).getTime()
+        processingTime: Date.now() - afterData.updatedAt.toMillis()
       });
 
     } catch (error) {

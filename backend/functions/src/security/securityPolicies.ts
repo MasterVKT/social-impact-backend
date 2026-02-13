@@ -165,9 +165,17 @@ export class SecurityPolicyEngine {
     exemptionCount: 0,
     cacheHitRate: 0
   };
+  private initialized = false;
 
   constructor() {
-    this.initializePolicyEngine();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializePolicyEngine();
+      this.initialized = true;
+    }
   }
 
   async evaluateRequest(context: {
@@ -182,6 +190,7 @@ export class SecurityPolicyEngine {
     headers?: Record<string, string>;
     timestamp?: Date;
   }): Promise<PolicyEnforcementResult> {
+    await this.ensureInitialized();
     const startTime = Date.now();
     this.enforcementStats.totalEvaluations++;
 

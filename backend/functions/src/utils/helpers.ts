@@ -84,6 +84,13 @@ export const dateHelpers = {
   },
 
   /**
+   * Alias pour daysBetween - calcule la différence en jours entre deux dates
+   */
+  differenceInDays(startDate: Date, endDate: Date): number {
+    return this.daysBetween(startDate, endDate);
+  },
+
+  /**
    * Ajoute des jours à une date
    */
   addDays(date: Date, days: number): Date {
@@ -136,6 +143,24 @@ export const dateHelpers = {
   defaultExpiration(fromDate: Date = new Date()): Date {
     return this.addDays(fromDate, 30);
   },
+
+  /**
+   * Ajoute des mois à une date
+   */
+  addMonths(date: Date, months: number): Date {
+    const result = new Date(date);
+    result.setMonth(result.getMonth() + months);
+    return result;
+  },
+
+  /**
+   * Calcule la différence en mois entre deux dates
+   */
+  differenceInMonths(startDate: Date, endDate: Date): number {
+    const yearDiff = endDate.getFullYear() - startDate.getFullYear();
+    const monthDiff = endDate.getMonth() - startDate.getMonth();
+    return yearDiff * 12 + monthDiff;
+  },
 };
 
 /**
@@ -167,6 +192,13 @@ export const stringHelpers = {
       .replace(/^-|-$/g, '')
       // Limiter la longueur
       .substring(0, maxLength);
+  },
+
+  /**
+   * Alias pour generateSlug
+   */
+  createSlug(title: string, maxLength: number = 50): string {
+    return this.generateSlug(title, maxLength);
   },
 
   /**

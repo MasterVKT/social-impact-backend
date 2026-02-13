@@ -4,6 +4,7 @@
  */
 
 import { firestore } from 'firebase-functions';
+import { Timestamp } from 'firebase-admin/firestore';
 import { logger } from '../utils/logger';
 import { firestoreHelper } from '../utils/firestore';
 import { emailService } from '../integrations/sendgrid/emailService';
@@ -56,21 +57,24 @@ async function initializeUserProfile(userData: UserProfileData): Promise<void> {
           inApp: true,
           project_update: {
             email: true,
+            push: true,
             inApp: true
           },
           contribution_received: {
             email: true,
+            push: true,
             inApp: true
           },
           payment_processed: {
             email: true,
+            push: true,
             inApp: true
           }
         },
         privacy: {
-          showProfile: false,
+          profilePublic: false,
           showContributions: false,
-          allowDirectMessages: true
+          allowContact: true
         }
       },
       
@@ -84,31 +88,29 @@ async function initializeUserProfile(userData: UserProfileData): Promise<void> {
       stats: {
         profileViews: 0,
         notificationsSent: 0,
-        notificationsRead: 0,
         projectsCreated: 0,
         projectsSupported: 0,
         totalContributed: 0,
         lastActivity: now,
         joinedAt: now
       },
-      
+
       // Métadonnées
       onboardingStep: 'profile_completion',
       emailVerified: false,
       phoneVerified: false,
       kycStatus: 'not_started',
-      
+
       // Données de création
       registrationData: {
         source: userData.source,
         referredBy: userData.referredBy,
         ipAddress: userData.ipAddress,
-        userAgent: userData.userAgent,
-        timestamp: now
+        userAgent: userData.userAgent
       },
-      
-      createdAt: now,
-      updatedAt: now,
+
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
       version: 1
     };
 
@@ -136,20 +138,18 @@ function getUserDefaultPermissions(userType: string): string[] {
     case 'creator':
       return [
         USER_PERMISSIONS.CREATE_PROJECT,
-        USER_PERMISSIONS.EDIT_OWN_PROJECT,
-        USER_PERMISSIONS.VIEW_CONTRIBUTOR_LIST
+        USER_PERMISSIONS.UPDATE_OWN_PROJECT,
+        USER_PERMISSIONS.VIEW_OWN_PROJECT
       ];
     case 'contributor':
       return [
-        USER_PERMISSIONS.CONTRIBUTE_TO_PROJECT,
-        USER_PERMISSIONS.VIEW_PROJECT_DETAILS,
-        USER_PERMISSIONS.MESSAGE_PROJECT_CREATOR
+        USER_PERMISSIONS.VIEW_PROJECTS,
+        USER_PERMISSIONS.VIEW_OWN_PROJECT
       ];
     case 'auditor':
       return [
-        USER_PERMISSIONS.VIEW_AUDIT_ASSIGNMENTS,
-        USER_PERMISSIONS.SUBMIT_AUDIT_REPORTS,
-        USER_PERMISSIONS.ACCESS_AUDIT_TOOLS
+        USER_PERMISSIONS.VIEW_PROJECTS,
+        USER_PERMISSIONS.VIEW_OWN_PROJECT
       ];
     default:
       return [];
@@ -163,15 +163,15 @@ async function createUserSubCollections(uid: string): Promise<void> {
   try {
     // Créer document de métadonnées pour les devices
     await firestoreHelper.setDocument(`users/${uid}/devices`, 'metadata', {
-      createdAt: new Date(),
-      lastUpdated: new Date(),
+      createdAt: Timestamp.now(),
+      lastUpdated: Timestamp.now(),
       deviceCount: 0,
       maxDevices: 5
     });
 
     // Créer document de métadonnées pour les sessions
     await firestoreHelper.setDocument(`users/${uid}/sessions`, 'metadata', {
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
       activeSessions: 0,
       lastSession: null,
       maxConcurrentSessions: 3
@@ -179,7 +179,7 @@ async function createUserSubCollections(uid: string): Promise<void> {
 
     // Créer document de métadonnées pour les notifications
     await firestoreHelper.setDocument(`users/${uid}/notification_preferences`, 'metadata', {
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
       customRules: [],
       blockedSenders: []
     });
@@ -266,7 +266,7 @@ async function updatePlatformStats(user: UserDocument): Promise<void> {
       // Créditer le parrain
       await firestoreHelper.incrementDocument('users', user.registrationData.referredBy, {
         'stats.referralsCount': 1,
-        'stats.lastReferral': new Date()
+        'stats.lastReferralAt': Timestamp.now()
       });
     }
 
@@ -300,8 +300,8 @@ async function initiateOnboardingProcess(user: UserDocument): Promise<void> {
         description: 'Cliquez sur le lien dans l\'email de confirmation',
         status: 'pending',
         priority: 'high',
-        dueDate: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
-        createdAt: new Date()
+        dueDate: Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000), // 24h
+        createdAt: Timestamp.now()
       },
       {
         id: helpers.string.generateId('task'),
@@ -311,8 +311,8 @@ async function initiateOnboardingProcess(user: UserDocument): Promise<void> {
         description: 'Ajoutez vos informations personnelles et préférences',
         status: 'pending',
         priority: 'medium',
-        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 jours
-        createdAt: new Date()
+        dueDate: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 jours
+        createdAt: Timestamp.now()
       }
     );
 
@@ -326,8 +326,8 @@ async function initiateOnboardingProcess(user: UserDocument): Promise<void> {
         description: 'Complétez le processus KYC pour pouvoir créer des projets',
         status: 'pending',
         priority: 'high',
-        dueDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 jours
-        createdAt: new Date()
+        dueDate: Timestamp.fromMillis(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 jours
+        createdAt: Timestamp.now()
       });
     }
 
@@ -340,8 +340,8 @@ async function initiateOnboardingProcess(user: UserDocument): Promise<void> {
         description: 'Soumettez vos qualifications et certifications',
         status: 'pending',
         priority: 'high',
-        dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 jours
-        createdAt: new Date()
+        dueDate: Timestamp.fromMillis(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 jours
+        createdAt: Timestamp.now()
       });
     }
 
@@ -371,17 +371,18 @@ async function initiateOnboardingProcess(user: UserDocument): Promise<void> {
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    });
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as any);
 
     // Mettre à jour le compteur de notifications
     await firestoreHelper.updateDocument('users', user.uid, {
       'notificationCounters.unread': firestoreHelper.increment(1),
       'notificationCounters.total': firestoreHelper.increment(1),
-      'notificationCounters.lastNotificationAt': new Date()
+      'notificationCounters.lastNotificationAt': Timestamp.now()
     });
 
     logger.info('Onboarding process initiated', {
@@ -443,8 +444,8 @@ async function prepareKYCProcess(user: UserDocument): Promise<void> {
       level: 'basic',
       provider: 'sumsub',
       requiredDocuments: KYC_CONFIG.REQUIRED_DOCUMENTS.CREATOR,
-      createdAt: new Date(),
-      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 jours
+      createdAt: Timestamp.now(),
+      expiresAt: Timestamp.fromMillis(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 jours
       attempts: 0,
       maxAttempts: KYC_CONFIG.MAX_ATTEMPTS
     });
@@ -474,14 +475,14 @@ async function analyzeRecommendedProjects(user: UserDocument): Promise<void> {
       ],
       {
         limit: 10,
-        orderBy: [{ field: 'createdAt', direction: 'desc' }]
+        orderBy: 'createdAt'
       }
     );
 
-    if (activeProjects.length > 0) {
+    if (activeProjects.data.length > 0) {
       // Créer document de recommandations
       await firestoreHelper.setDocument(`users/${user.uid}/recommendations`, 'projects', {
-        projects: activeProjects.slice(0, 5).map(project => ({
+        projects: activeProjects.data.slice(0, 5).map(project => ({
           projectId: project.id,
           title: project.title,
           description: project.description,
@@ -493,14 +494,14 @@ async function analyzeRecommendedProjects(user: UserDocument): Promise<void> {
           recommendationScore: Math.random() * 100, // TODO: Implémenter algorithme de recommandation
           reasons: ['new_user_recommendation', 'category_match']
         })),
-        createdAt: new Date(),
-        lastUpdated: new Date(),
+        createdAt: Timestamp.now(),
+        lastUpdated: Timestamp.now(),
         algorithm: 'initial_user_v1'
       });
 
       logger.info('Project recommendations created for new contributor', {
         uid: user.uid,
-        recommendedProjects: activeProjects.length
+        recommendedProjects: activeProjects.data.length
       });
     }
 
@@ -529,8 +530,8 @@ async function validateAuditorQualifications(user: UserDocument): Promise<void> 
       submittedDocuments: [],
       reviewStatus: 'not_started',
       reviewerUid: null,
-      createdAt: new Date(),
-      dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 jours
+      createdAt: Timestamp.now(),
+      dueDate: Timestamp.fromMillis(Date.now() + 14 * 24 * 60 * 60 * 1000), // 14 jours
       notes: []
     });
 
@@ -556,7 +557,7 @@ async function updateAcquisitionMetrics(user: UserDocument): Promise<void> {
       source: user.registrationData?.source || 'unknown',
       hasReferral: !!user.registrationData?.referredBy,
       country: 'FR', // TODO: Détecter depuis l'IP
-      timestamp: new Date()
+      timestamp: Timestamp.now()
     };
 
     // Sauvegarder les données d'acquisition pour analyse
@@ -610,7 +611,7 @@ async function handleReferralProcess(user: UserDocument): Promise<void> {
       completionCriteria: getReferralCompletionCriteria(user.userType),
       rewardStatus: 'pending',
       rewardAmount: getReferralRewardAmount(user.userType),
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
       completedAt: null,
       rewardedAt: null
     });
@@ -636,11 +637,12 @@ async function handleReferralProcess(user: UserDocument): Promise<void> {
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    });
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as any);
 
     // Mettre à jour le compteur du parrain
     await firestoreHelper.updateDocument('users', referrerId, {
@@ -720,7 +722,7 @@ export const onUserCreate = firestore
         email: userData.email,
         firstName: userData.firstName,
         lastName: userData.lastName,
-        userType: userData.userType,
+        userType: (userData.userType === 'admin' ? 'creator' : userData.userType) as 'creator' | 'contributor' | 'auditor',
         source: userData.registrationData?.source as any || 'email',
         referredBy: userData.registrationData?.referredBy,
         ipAddress: userData.registrationData?.ipAddress,
@@ -760,7 +762,7 @@ export const onUserCreate = firestore
       logger.info('User creation trigger completed successfully', {
         uid,
         userType: userData.userType,
-        processingTime: Date.now() - new Date(userData.createdAt).getTime()
+        processingTime: userData.createdAt ? Date.now() - userData.createdAt.toMillis() : 0
       });
 
     } catch (error) {
@@ -776,10 +778,10 @@ export const onUserCreate = firestore
           status: 'initialization_failed',
           initializationError: {
             message: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date(),
+            timestamp: Timestamp.now(),
             retryCount: 0
           },
-          updatedAt: new Date()
+          updatedAt: Timestamp.now()
         });
       } catch (updateError) {
         logger.error('Failed to mark user initialization as failed', updateError, { uid });

@@ -114,7 +114,7 @@ async function validateUserRelationship(
         ],
         { limit: 1 }
       );
-      return sharedProjects.length > 0;
+      return sharedProjects.data.length > 0;
     }
 
     // Les auditeurs peuvent notifier les créateurs de leurs projets audités
@@ -128,7 +128,7 @@ async function validateUserRelationship(
         ],
         { limit: 1 }
       );
-      return auditedProjects.length > 0;
+      return auditedProjects.data.length > 0;
     }
 
     // Messages directs entre utilisateurs connectés
@@ -326,7 +326,7 @@ async function sendPushNotification(
       ]
     );
 
-    if (deviceTokens.length === 0) {
+    if (deviceTokens.data.length === 0) {
       logger.info('No active push tokens for user', { recipientUid: recipient.uid });
       return false;
     }
@@ -337,7 +337,7 @@ async function sendPushNotification(
       recipientUid: recipient.uid,
       type: data.type,
       title: data.title,
-      deviceCount: deviceTokens.length,
+      deviceCount: deviceTokens.data.length,
     });
 
     return true;
@@ -373,8 +373,8 @@ async function handleNotificationGrouping(
       ]
     );
 
-    if (similarNotifications.length > 0) {
-      const updatePromises = similarNotifications.map(notification =>
+    if (similarNotifications.data.length > 0) {
+      const updatePromises = similarNotifications.data.map(notification =>
         firestoreHelper.updateDocument('notifications', notification.id, {
           superseded: true,
           supersededAt: new Date(),
@@ -387,7 +387,7 @@ async function handleNotificationGrouping(
       logger.info('Grouped notifications superseded', {
         recipientUid: recipient.uid,
         groupKey: data.groupKey,
-        supersededCount: similarNotifications.length,
+        supersededCount: similarNotifications.data.length,
       });
     }
 
@@ -464,8 +464,8 @@ async function checkRateLimits(
       ]
     );
 
-    if (senderNotifications.length >= NOTIFICATION_CONFIG.MAX_PER_SENDER_PER_HOUR) {
-      throw new https.HttpsError('resource-exhausted', 
+    if (senderNotifications.data.length >= NOTIFICATION_CONFIG.MAX_PER_SENDER_PER_HOUR) {
+      throw new https.HttpsError('resource-exhausted',
         `Sender rate limit exceeded: ${NOTIFICATION_CONFIG.MAX_PER_SENDER_PER_HOUR} notifications per hour`);
     }
 
@@ -478,18 +478,18 @@ async function checkRateLimits(
       ]
     );
 
-    if (recipientNotifications.length >= NOTIFICATION_CONFIG.MAX_PER_RECIPIENT_PER_HOUR) {
-      throw new https.HttpsError('resource-exhausted', 
+    if (recipientNotifications.data.length >= NOTIFICATION_CONFIG.MAX_PER_RECIPIENT_PER_HOUR) {
+      throw new https.HttpsError('resource-exhausted',
         `Recipient rate limit exceeded: ${NOTIFICATION_CONFIG.MAX_PER_RECIPIENT_PER_HOUR} notifications per hour`);
     }
 
     // Vérifier les limites par type
-    const typeNotifications = senderNotifications.filter(n => n.type === notificationType);
-    const maxPerType = NOTIFICATION_CONFIG.MAX_PER_TYPE_PER_HOUR[notificationType] || 
+    const typeNotifications = senderNotifications.data.filter(n => n.type === notificationType);
+    const maxPerType = NOTIFICATION_CONFIG.MAX_PER_TYPE_PER_HOUR[notificationType] ||
                       NOTIFICATION_CONFIG.DEFAULT_MAX_PER_TYPE_PER_HOUR;
 
     if (typeNotifications.length >= maxPerType) {
-      throw new https.HttpsError('resource-exhausted', 
+      throw new https.HttpsError('resource-exhausted',
         `Type rate limit exceeded: ${maxPerType} ${notificationType} notifications per hour`);
     }
 
@@ -497,8 +497,8 @@ async function checkRateLimits(
       senderUid,
       recipientUid,
       notificationType,
-      senderCount: senderNotifications.length,
-      recipientCount: recipientNotifications.length,
+      senderCount: senderNotifications.data.length,
+      recipientCount: recipientNotifications.data.length,
       typeCount: typeNotifications.length,
     });
 
@@ -532,12 +532,12 @@ async function checkForDuplicates(
       { limit: 1 }
     );
 
-    if (recentSimilar.length > 0) {
+    if (recentSimilar.data.length > 0) {
       logger.info('Duplicate notification detected', {
         recipientUid,
         type: data.type,
         title: data.title,
-        existingNotificationId: recentSimilar[0].id,
+        existingNotificationId: recentSimilar.data[0].id,
       });
       return true;
     }

@@ -184,11 +184,21 @@ export class MetricsCollector {
   private businessMetricsHistory: BusinessMetrics[] = [];
   private securityMetricsHistory: SecurityMetrics[] = [];
 
+  private initialized = false;
+
   constructor() {
-    this.initializeMetricsCollection();
+    // Don't initialize here - use lazy initialization to avoid Firestore calls during module import
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeMetricsCollection();
+      this.initialized = true;
+    }
   }
 
   async recordMetric(metricData: Omit<MetricData, 'id' | 'timestamp'>): Promise<void> {
+    await this.ensureInitialized();
     try {
       const metric: MetricData = {
         id: `metric_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -1246,8 +1256,18 @@ export class MetricsCollector {
   }
 }
 
-// Singleton instance
-export const metricsCollector = new MetricsCollector();
+// Lazy singleton instance - only created when first accessed
+let _metricsCollector: MetricsCollector | null = null;
+
+export function getMetricsCollector(): MetricsCollector {
+  if (!_metricsCollector) {
+    _metricsCollector = new MetricsCollector();
+  }
+  return _metricsCollector;
+}
+
+// Backward compatible export - calls getter
+export const metricsCollector = getMetricsCollector();
 
 // Helper functions for easy metric recording
 export async function recordTimer(name: string, startTime: number, tags?: Record<string, string>): Promise<void> {

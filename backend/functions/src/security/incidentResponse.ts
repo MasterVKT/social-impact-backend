@@ -230,9 +230,17 @@ export class IncidentResponseSystem {
     averageResolutionTime: 0,
     escalationRate: 0
   };
+  private initialized = false;
 
   constructor() {
-    this.initializeIncidentResponse();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeIncidentResponse();
+      this.initialized = true;
+    }
   }
 
   async createIncident(
@@ -244,6 +252,7 @@ export class IncidentResponseSystem {
       playbook?: string;
     }
   ): Promise<SecurityIncident> {
+    await this.ensureInitialized();
     try {
       const incident = await this.buildIncidentFromSource(alertOrEvent, options);
       

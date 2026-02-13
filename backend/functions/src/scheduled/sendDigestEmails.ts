@@ -89,7 +89,7 @@ async function getEligibleUsers(digestType: 'daily' | 'weekly' | 'monthly'): Pro
 
     // Filtrer selon la fréquence du dernier envoi
     const now = new Date();
-    const eligibleUsers = users.filter(user => {
+    const eligibleUsers = users.data.filter(user => {
       const lastDigest = user.emailDigests?.[digestType]?.lastSent;
       
       if (!lastDigest) {
@@ -112,7 +112,7 @@ async function getEligibleUsers(digestType: 'daily' | 'weekly' | 'monthly'): Pro
 
     logger.info('Eligible users retrieved for digest', {
       digestType,
-      totalUsers: users.length,
+      totalUsers: users.data.length,
       eligibleUsers: eligibleUsers.length
     });
 
@@ -175,7 +175,7 @@ async function collectUserDigestData(
       firstName: user.firstName,
       lastName: user.lastName,
       digestType,
-      unreadNotifications,
+      unreadNotifications: unreadNotifications.data,
       projectUpdates,
       contributionSummary,
       personalizedRecommendations,
@@ -186,7 +186,7 @@ async function collectUserDigestData(
     logger.info('User digest data collected', {
       userId: user.uid,
       digestType,
-      unreadCount: unreadNotifications.length,
+      unreadCount: unreadNotifications.data.length,
       projectUpdatesCount: projectUpdates.length,
       recommendationsCount: personalizedRecommendations.length
     });
@@ -220,7 +220,7 @@ async function getProjectUpdatesForUser(
         [['creatorUid', '==', user.uid]],
         { limit: 20 }
       );
-      projectIds = createdProjects.map(p => p.id);
+      projectIds = createdProjects.data.map(p => p.id);
 
     } else if (user.userType === 'contributor') {
       // Projets auxquels l'utilisateur a contribué
@@ -232,7 +232,7 @@ async function getProjectUpdatesForUser(
         ],
         { limit: 20 }
       );
-      projectIds = [...new Set(contributions.map(c => c.projectId))];
+      projectIds = [...new Set(contributions.data.map(c => c.projectId))];
 
     } else if (user.userType === 'auditor') {
       // Projets audités par l'utilisateur
@@ -241,7 +241,7 @@ async function getProjectUpdatesForUser(
         [['auditorUid', '==', user.uid]],
         { limit: 20 }
       );
-      projectIds = [...new Set(audits.map(a => a.projectId))];
+      projectIds = [...new Set(audits.data.map(a => a.projectId))];
     }
 
     if (projectIds.length === 0) {
@@ -263,7 +263,7 @@ async function getProjectUpdatesForUser(
 
     // Enrichir avec les données de projet
     const enrichedUpdates = await Promise.all(
-      projectEvents.map(async (event) => {
+      projectEvents.data.map(async (event) => {
         try {
           const project = await firestoreHelper.getDocument<ProjectDocument>('projects', event.projectId);
           return {
@@ -323,25 +323,25 @@ async function getContributionSummary(
       ]
     );
 
-    if (recentContributions.length === 0) {
+    if (recentContributions.data.length === 0) {
       return null;
     }
 
-    const totalAmount = recentContributions.reduce((sum, contrib) => sum + contrib.amount, 0);
-    const projectCount = new Set(recentContributions.map(c => c.projectId)).size;
+    const totalAmount = recentContributions.data.reduce((sum, contrib) => sum + contrib.amount, 0);
+    const projectCount = new Set(recentContributions.data.map(c => c.projectId)).size;
 
     // Calculer les intérêts gagnés
-    const interestEarned = recentContributions.reduce((sum, contrib) => 
+    const interestEarned = recentContributions.data.reduce((sum, contrib) =>
       sum + (contrib.accruedInterest || 0), 0
     );
 
     return {
-      contributionsCount: recentContributions.length,
+      contributionsCount: recentContributions.data.length,
       totalAmount,
-      averageContribution: Math.round(totalAmount / recentContributions.length),
+      averageContribution: Math.round(totalAmount / recentContributions.data.length),
       projectsSupported: projectCount,
       interestEarned,
-      recentContributions: recentContributions.slice(0, 5).map(contrib => ({
+      recentContributions: recentContributions.data.slice(0, 5).map(contrib => ({
         projectId: contrib.projectId,
         amount: contrib.amount,
         confirmedAt: contrib.confirmedAt,
@@ -375,7 +375,7 @@ async function generatePersonalizedRecommendations(user: UserDocument): Promise<
 
       // Analyser les catégories préférées
       const categoryInterests = new Map<string, number>();
-      userContributions.forEach(contrib => {
+      userContributions.data.forEach(contrib => {
         const category = contrib.projectCategory;
         categoryInterests.set(category, (categoryInterests.get(category) || 0) + contrib.amount);
       });
@@ -400,7 +400,7 @@ async function generatePersonalizedRecommendations(user: UserDocument): Promise<
           }
         );
 
-        recommendations.push(...recommendedProjects.map(project => ({
+        recommendations.push(...recommendedProjects.data.map(project => ({
           type: 'project_recommendation',
           projectId: project.id,
           title: project.title,
@@ -424,7 +424,7 @@ async function generatePersonalizedRecommendations(user: UserDocument): Promise<
       );
 
       // Recommandations d'amélioration
-      const activeProjects = userProjects.filter(p => p.status === STATUS.PROJECT.ACTIVE);
+      const activeProjects = userProjects.data.filter(p => p.status === STATUS.PROJECT.ACTIVE);
       
       activeProjects.forEach(project => {
         const fundingPercentage = (project.currentFunding / project.fundingGoal) * 100;
@@ -453,7 +453,7 @@ async function generatePersonalizedRecommendations(user: UserDocument): Promise<
         { limit: 5 }
       );
 
-      recommendations.push(...availableAudits.map(audit => ({
+      recommendations.push(...availableAudits.data.map(audit => ({
         type: 'audit_opportunity',
         auditId: audit.id,
         projectTitle: audit.projectTitle,
@@ -498,7 +498,7 @@ async function getPlatformNews(sinceDate: Date): Promise<any[]> {
     // Récupérer les statistiques intéressantes de la plateforme
     const platformStats = await firestoreHelper.getDocument('platform_stats', 'global');
     
-    const news = announcements.map(announcement => ({
+    const news = announcements.data.map(announcement => ({
       type: 'platform_announcement',
       title: announcement.title,
       summary: announcement.summary,
@@ -544,7 +544,7 @@ async function getProjectUpdatesForUser(user: UserDocument, sinceDate: Date): Pr
         [['creatorUid', '==', user.uid]],
         { limit: 10 }
       );
-      relevantProjectIds = createdProjects.map(p => p.id);
+      relevantProjectIds = createdProjects.data.map(p => p.id);
 
     } else if (user.userType === 'contributor') {
       const contributions = await firestoreHelper.queryDocuments<any>(
@@ -554,7 +554,7 @@ async function getProjectUpdatesForUser(user: UserDocument, sinceDate: Date): Pr
           ['status', '==', 'confirmed']
         ]
       );
-      relevantProjectIds = [...new Set(contributions.map(c => c.projectId))];
+      relevantProjectIds = [...new Set(contributions.data.map(c => c.projectId))];
     }
 
     if (relevantProjectIds.length === 0) {
@@ -576,7 +576,7 @@ async function getProjectUpdatesForUser(user: UserDocument, sinceDate: Date): Pr
 
     // Enrichir avec les données de projet
     const enrichedUpdates = await Promise.all(
-      projectEvents.map(async (event) => {
+      projectEvents.data.map(async (event) => {
         try {
           const project = await firestoreHelper.getDocument<ProjectDocument>('projects', event.projectId);
           return {
@@ -855,7 +855,7 @@ async function checkUserActivityForDigest(
     ]);
 
     // Critères d'activité
-    const hasUnreadNotifications = unreadNotifications.length > 0;
+    const hasUnreadNotifications = unreadNotifications.data.length > 0;
     const hasRecentActivity = recentActivity.length > 0 && 
       user.stats?.lastActivity && 
       (now.getTime() - user.stats.lastActivity.getTime()) < timeRanges[digestType] * 2; // Dans les 2x la période

@@ -76,10 +76,18 @@ export class AccessControlSystem {
   private auth = getAuth();
   private rolePermissions: Map<Role, Permission[]> = new Map();
   private resourcePermissions: Map<string, Permission[]> = new Map();
+  private initialized = false;
 
   constructor() {
-    this.initializeRolePermissions();
-    this.initializeResourcePermissions();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      this.initializeRolePermissions();
+      this.initializeResourcePermissions();
+      this.initialized = true;
+    }
   }
 
   private initializeRolePermissions(): void {
@@ -183,6 +191,7 @@ export class AccessControlSystem {
   }
 
   async checkAccess(context: AccessContext): Promise<AccessDecision> {
+    this.ensureInitialized();
     try {
       // Get user roles and permissions
       const userRole = await this.getUserRole(context.userId);

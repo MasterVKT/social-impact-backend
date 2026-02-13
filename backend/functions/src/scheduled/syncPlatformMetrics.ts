@@ -128,20 +128,20 @@ async function collectUserMetrics(
       ])
     ]);
 
-    const byType = totalUsers.reduce((counts, user) => {
+    const byType = totalUsers.data.reduce((counts, user) => {
       counts[user.userType]++;
       return counts;
     }, { creators: 0, contributors: 0, auditors: 0 });
 
-    const totalSessions = activeUsers.reduce((sum, user) => sum + (user.stats?.sessionsCount || 0), 0);
-    const averageActivity = activeUsers.length > 0 ? totalSessions / activeUsers.length : 0;
+    const totalSessions = activeUsers.data.reduce((sum, user) => sum + (user.stats?.sessionsCount || 0), 0);
+    const averageActivity = activeUsers.data.length > 0 ? totalSessions / activeUsers.data.length : 0;
 
     return {
-      total: totalUsers.length,
-      active: activeUsers.length,
-      new: newUsers.length,
+      total: totalUsers.data.length,
+      active: activeUsers.data.length,
+      new: newUsers.data.length,
       byType,
-      kycApproved: kycApprovedUsers.length,
+      kycApproved: kycApprovedUsers.data.length,
       averageActivity
     };
 
@@ -183,26 +183,26 @@ async function collectProjectMetrics(
       ])
     ]);
 
-    const byStatus = allProjects.reduce((counts, project) => {
+    const byStatus = allProjects.data.reduce((counts, project) => {
       counts[project.status] = (counts[project.status] || 0) + 1;
       return counts;
     }, {} as Record<string, number>);
 
-    const byCategory = allProjects.reduce((counts, project) => {
+    const byCategory = allProjects.data.reduce((counts, project) => {
       counts[project.category] = (counts[project.category] || 0) + 1;
       return counts;
     }, {} as Record<string, number>);
 
-    const activeProjects = allProjects.filter(p => p.status === STATUS.PROJECT.ACTIVE);
+    const activeProjects = allProjects.data.filter(p => p.status === STATUS.PROJECT.ACTIVE);
     const totalFunding = activeProjects.reduce((sum, project) => sum + project.currentFunding, 0);
     const averageFunding = activeProjects.length > 0 ? totalFunding / activeProjects.length : 0;
 
     return {
-      total: allProjects.length,
+      total: allProjects.data.length,
       active: activeProjects.length,
-      completed: completedProjects.length,
-      cancelled: cancelledProjects.length,
-      new: newProjects.length,
+      completed: completedProjects.data.length,
+      cancelled: cancelledProjects.data.length,
+      new: newProjects.data.length,
       totalFunding,
       averageFunding,
       byCategory,

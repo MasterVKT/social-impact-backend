@@ -5,11 +5,13 @@
  * This file exports all Firebase Functions for deployment
  */
 
-import { onRequest } from 'firebase-functions/v2/https';
-import { setGlobalOptions } from 'firebase-functions/v2';
+// Initialize Firebase Admin FIRST - before any other imports
+import * as admin from 'firebase-admin';
+admin.initializeApp();
+
+import {setGlobalOptions} from 'firebase-functions/v2';
 import express from 'express';
-import { logger } from './utils/logger';
-import { apiRouter } from './api';
+import {apiRouter} from './api';
 
 // ============================================================================
 // GLOBAL CONFIGURATION
@@ -64,7 +66,7 @@ export const api = onRequest({
   region: 'europe-west1',
   memory: '2GiB',
   timeoutSeconds: 300,
-  maxInstances: 200,
+  maxInstances: 20,
   minInstances: 2,
   concurrency: 1000
 }, app);
@@ -94,11 +96,12 @@ export { getProjectAnalytics } from './projects/getProjectAnalytics';
 // PAYMENTS MODULE FUNCTIONS
 // ============================================================================
 
-export { createContribution } from './payments/createContribution';
-export { confirmPayment } from './payments/confirmPayment';
-export { handleStripeWebhook } from './payments/handleStripeWebhook';
-export { processRefunds } from './payments/processRefunds';
-export { releaseEscrow } from './payments/releaseEscrow';
+export {createContribution} from './payments/createContribution';
+export {stripeCreatePaymentIntent} from './payments/stripeCreatePaymentIntent';
+export {confirmPayment} from './payments/confirmPayment';
+export {handleStripeWebhook} from './payments/handleStripeWebhook';
+export {processRefunds} from './payments/processRefunds';
+export {releaseEscrow} from './payments/releaseEscrow';
 
 // ============================================================================
 // AUDITS MODULE FUNCTIONS
@@ -139,6 +142,12 @@ export { updateTrendingProjects } from './scheduled/updateTrendingProjects';
 export { generateMonthlyReports } from './scheduled/generateMonthlyReports';
 export { syncPlatformMetrics } from './scheduled/syncPlatformMetrics';
 export { processAuditQueue } from './scheduled/processAuditQueue';
+
+// ============================================================================
+// MIGRATION FUNCTIONS
+// ============================================================================
+
+export { migrateUserDocument } from './migrations/migrateUserDocument';
 
 // ============================================================================
 // FIREBASE FUNCTIONS CONFIGURATION

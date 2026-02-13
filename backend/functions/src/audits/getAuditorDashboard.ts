@@ -98,23 +98,23 @@ async function calculateAuditorStats(
     thisMonthStart.setDate(1);
     thisMonthStart.setHours(0, 0, 0, 0);
 
-    const thisMonthAudits = audits.filter(audit => 
+    const thisMonthAudits = audits.data.filter(audit =>
       audit.completedAt && new Date(audit.completedAt) >= thisMonthStart
     );
 
     // Calculer les statistiques
-    const completedAudits = audits.filter(audit => audit.status === STATUS.AUDIT.COMPLETED);
+    const completedAudits = audits.data.filter(audit => audit.status === STATUS.AUDIT.COMPLETED);
     const approvedAudits = completedAudits.filter(audit => audit.finalDecision === 'approved');
-    
+
     const totalProcessingTimes = completedAudits
       .filter(audit => audit.completionTime)
       .map(audit => audit.completionTime!);
-    
-    const averageProcessingTime = totalProcessingTimes.length > 0 
+
+    const averageProcessingTime = totalProcessingTimes.length > 0
       ? Math.round(totalProcessingTimes.reduce((sum, time) => sum + time, 0) / totalProcessingTimes.length)
       : 0;
 
-    const approvalRate = completedAudits.length > 0 
+    const approvalRate = completedAudits.length > 0
       ? Math.round((approvedAudits.length / completedAudits.length) * 100)
       : 0;
 
@@ -129,9 +129,9 @@ async function calculateAuditorStats(
     }, 0);
 
     return {
-      totalAudits: audits.length,
+      totalAudits: audits.data.length,
       completedAudits: completedAudits.length,
-      activeAudits: audits.filter(audit => 
+      activeAudits: audits.data.filter(audit =>
         [STATUS.AUDIT.ASSIGNED, STATUS.AUDIT.IN_PROGRESS].includes(audit.status)
       ).length,
       completedThisMonth: thisMonthAudits.length,
@@ -174,7 +174,7 @@ async function getAssignedAudits(
 
     // Enrichir avec les informations des projets
     const assignedWithDetails = await Promise.all(
-      assignedAudits.map(async (audit) => {
+      assignedAudits.data.map(async (audit) => {
         try {
           const project = await firestoreHelper.getDocument<ProjectDocument>('projects', audit.projectId);
           
@@ -294,7 +294,7 @@ async function getAuditHistory(
 
     // Enrichir avec les détails et le feedback
     const historyWithDetails = await Promise.all(
-      completedAudits.map(async (audit) => {
+      completedAudits.data.map(async (audit) => {
         try {
           // Récupérer le projet pour le titre
           const project = await firestoreHelper.getDocument<ProjectDocument>('projects', audit.projectId);
@@ -309,7 +309,7 @@ async function getAuditHistory(
             { limit: 1 }
           );
 
-          const creatorFeedback = feedback.length > 0 ? feedback[0] : null;
+          const creatorFeedback = feedback.data.length > 0 ? feedback.data[0] : null;
 
           return {
             auditId: audit.id,
@@ -395,7 +395,7 @@ async function getAvailableOpportunities(
     );
 
     // Filtrer par spécialisations et disponibilité
-    const opportunities = projectsNeedingAudit
+    const opportunities = projectsNeedingAudit.data
       .filter(project => {
         // Vérifier la correspondance de spécialisation
         const projectRequirements = AUDIT_CONFIG.SPECIALIZATION_REQUIREMENTS[project.category] || [];
@@ -498,10 +498,10 @@ async function getAuditorAlerts(auditorUid: string): Promise<any[]> {
       ]
     );
 
-    assignedAudits.forEach(audit => {
+    assignedAudits.data.forEach(audit => {
       const deadline = new Date(audit.deadline);
       const daysUntilDeadline = Math.ceil((deadline.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
-      
+
       if (daysUntilDeadline <= 3) {
         alerts.push({
           type: 'deadline_approaching',
@@ -541,7 +541,7 @@ async function getAuditorAlerts(auditorUid: string): Promise<any[]> {
       ]
     );
 
-    overduePayments.forEach(payment => {
+    overduePayments.data.forEach(payment => {
       alerts.push({
         type: 'payment_overdue',
         priority: 'high',
@@ -599,8 +599,8 @@ async function executeGetAuditorDashboard(
       { limit: 100 }
     );
 
-    const averageRating = feedbacks.length > 0 
-      ? Math.round((feedbacks.reduce((sum, f) => sum + f.rating, 0) / feedbacks.length) * 10) / 10
+    const averageRating = feedbacks.data.length > 0
+      ? Math.round((feedbacks.data.reduce((sum, f) => sum + f.rating, 0) / feedbacks.data.length) * 10) / 10
       : 0;
     
     stats.rating = averageRating;

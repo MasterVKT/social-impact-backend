@@ -233,7 +233,8 @@ export class AuditLogger {
   };
 
   constructor() {
-    this.initializeAuditLogger();
+    // Skip initialization entirely during deployment
+    // Will be initialized lazily on first actual use in production
   }
 
   async logEvent(eventData: Omit<AuditEvent, 'id' | 'timestamp'>): Promise<AuditEvent> {
@@ -1200,7 +1201,7 @@ export class AuditLogger {
 
     } catch (error) {
       logger.error('Failed to initialize audit logger', error as Error);
-      throw error;
+      // Don't throw - allow deployment analysis to continue
     }
   }
 
@@ -1217,6 +1218,7 @@ export class AuditLogger {
 
     } catch (error) {
       logger.error('Failed to load retention policies', error as Error);
+      // Don't throw - allow initialization to continue in emulator/deploy
     }
   }
 

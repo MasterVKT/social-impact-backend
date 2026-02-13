@@ -1,0 +1,17 @@
+{
+  "name": "social-impact-platform-scripts",
+  "version": "1.0.0",
+  "description": "Scripts de maintenance pour la plateforme Social Impact",
+  "private": true,
+  "scripts": {
+    "sync:firestore-rules": "node scripts/sync-firestore-rules.js",
+    "sync:all": "npm run sync:firestore-rules"
+  },
+  "keywords": [
+    "firebase",
+    "firestore",
+    "synchronization"
+  ],
+  "author": "Backend AI Agent",
+  "license": "UNLICENSED"
+}

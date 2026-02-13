@@ -1,11 +1,44 @@
-import { getFirestore, DocumentReference, CollectionReference, Query, WriteResult } from 'firebase-admin/firestore';
+import { getFirestore, DocumentReference, CollectionReference, Query, WriteResult, FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { logger } from './logger';
 import { NotFoundError } from './errors';
+
+/**
+ * Utilitaires pour les Timestamps
+ */
+export const TimestampUtils = {
+  /**
+   * Crée un Timestamp à partir d'une Date
+   */
+  fromDate(date: Date): Timestamp {
+    return Timestamp.fromDate(date);
+  },
+
+  /**
+   * Crée un Timestamp pour maintenant
+   */
+  now(): Timestamp {
+    return Timestamp.now();
+  },
+
+  /**
+   * Convertit un Timestamp en Date
+   */
+  toDate(timestamp: Timestamp): Date {
+    return timestamp.toDate();
+  },
+
+  /**
+   * Obtient le timestamp en millisecondes
+   */
+  toMillis(timestamp: Timestamp): number {
+    return timestamp.toMillis();
+  },
+};
 
 export interface PaginationOptions {
   limit?: number;
   offset?: number;
-  orderBy?: string;
+  orderBy?: string | Array<{ field: string; direction: 'asc' | 'desc' }>;
   orderDirection?: 'asc' | 'desc';
   startAfter?: any;
 }
@@ -36,11 +69,11 @@ export class FirestoreHelper {
   }
 
   async setDocument<T extends Record<string, any>>(
-    collection: string, 
-    docId: string, 
+    collection: string,
+    docId: string,
     data: T
   ): Promise<WriteResult> {
-    const timestamp = new Date();
+    const timestamp = Timestamp.now();
     const documentData = {
       ...data,
       updatedAt: timestamp,
@@ -63,7 +96,7 @@ export class FirestoreHelper {
   ): Promise<WriteResult> {
     const updateData = {
       ...data,
-      updatedAt: new Date()
+      updatedAt: Timestamp.now()
     };
 
     logger.info('Updating document', {
@@ -84,7 +117,7 @@ export class FirestoreHelper {
     collection: string,
     data: T
   ): Promise<DocumentReference> {
-    const timestamp = new Date();
+    const timestamp = Timestamp.now();
     const documentData = {
       ...data,
       createdAt: timestamp,
@@ -97,14 +130,20 @@ export class FirestoreHelper {
 
   async queryDocuments<T>(
     collection: string,
-    filters: Array<{ field: string; operator: FirebaseFirestore.WhereFilterOp; value: any }> = [],
+    filters: Array<{ field: string; operator: FirebaseFirestore.WhereFilterOp; value: any } | [string, FirebaseFirestore.WhereFilterOp, any]> = [],
     options: PaginationOptions = {}
   ): Promise<PaginatedResult<T>> {
     let query: Query = this.db.collection(collection);
 
     // Apply filters
     filters.forEach(filter => {
-      query = query.where(filter.field, filter.operator, filter.value);
+      if (Array.isArray(filter)) {
+        // Format tableau: ['field', 'operator', value]
+        query = query.where(filter[0], filter[1], filter[2]);
+      } else {
+        // Format objet: { field, operator, value }
+        query = query.where(filter.field, filter.operator, filter.value);
+      }
     });
 
     // Apply ordering
@@ -157,13 +196,13 @@ export class FirestoreHelper {
 
     operations.forEach(op => {
       const docRef = this.db.collection(op.collection).doc(op.docId);
-      
+
       switch (op.operation) {
         case 'set':
-          batch.set(docRef, { ...op.data, updatedAt: new Date() });
+          batch.set(docRef, { ...op.data, updatedAt: Timestamp.now() });
           break;
         case 'update':
-          batch.update(docRef, { ...op.data, updatedAt: new Date() });
+          batch.update(docRef, { ...op.data, updatedAt: Timestamp.now() });
           break;
         case 'delete':
           batch.delete(docRef);
@@ -181,6 +220,39 @@ export class FirestoreHelper {
 
   getDocumentRef(collection: string, docId: string): DocumentReference {
     return this.db.collection(collection).doc(docId);
+  }
+
+  /**
+   * Retourne un objet FieldValue.increment pour incrémenter une valeur
+   */
+  increment(value: number): FirebaseFirestore.FieldValue {
+    return FieldValue.increment(value);
+  }
+
+  /**
+   * Incrémente des champs spécifiques d'un document
+   */
+  async incrementDocument(
+    collection: string,
+    docId: string,
+    increments: Record<string, number>
+  ): Promise<WriteResult> {
+    const updateData: Record<string, any> = {
+      updatedAt: Timestamp.now()
+    };
+
+    // Ajoute les incréments
+    Object.entries(increments).forEach(([field, value]) => {
+      updateData[field] = FieldValue.increment(value);
+    });
+
+    logger.info('Incrementing document fields', {
+      collection,
+      docId,
+      fields: Object.keys(increments)
+    });
+
+    return this.db.collection(collection).doc(docId).update(updateData);
   }
 }
 

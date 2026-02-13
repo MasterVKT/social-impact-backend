@@ -179,6 +179,13 @@ export namespace ProjectsAPI {
       isMain?: boolean;
     }[];
     tags?: string[];
+
+    // Propriété de compatibilité - structure alternative
+    funding?: {
+      goal: number;
+      deadline: string;
+      currency?: string;
+    };
   }
 
   export interface CreateProjectResponse {
@@ -328,7 +335,24 @@ export namespace ProjectsAPI {
 
   // Search Projects
   export interface SearchProjectsRequest extends PaginationOptions {
-    query: string;
+    query?: string;
+    category?: ProjectCategory;
+    tags?: string[];
+    country?: Country;
+    region?: string;
+    fundingRange?: {
+      min?: number;
+      max?: number;
+    };
+    fundingStatus?: 'active' | 'completed' | 'all';
+    publishedSince?: Date;
+    deadlineBefore?: Date;
+    sortBy?: 'relevance' | 'funding_progress' | 'funding_goal' | 'recent' | 'deadline' | 'popularity';
+    sortOrder?: 'asc' | 'desc';
+    page?: number;
+    limit?: number;
+    includeStats?: boolean;
+    includeCreator?: boolean;
     filters?: {
       category?: ProjectCategory;
       status?: string[];
@@ -341,6 +365,16 @@ export namespace ProjectsAPI {
         max?: number;
       };
     };
+  }
+
+  export interface SearchProjectsResponse {
+    projects: any[];
+    pagination: any;
+    facets: any;
+    totalResults: number;
+    searchQuery?: string;
+    appliedFilters?: any;
+    success: boolean;
   }
 }
 
@@ -466,6 +500,20 @@ export namespace AuditsAPI {
   export interface AcceptAuditRequest {
     acceptanceNote?: string;
     estimatedCompletionDate: string;
+    proposedTimeline?: {
+      startDate: string;
+      endDate: string;
+      milestones?: Array<{
+        phase: string;
+        duration: number;
+      }>;
+    };
+    requestedResources?: Array<{
+      type: string;
+      description: string;
+      quantity?: number;
+    }>;
+    auditId?: string;
   }
 
   export interface AcceptAuditResponse {

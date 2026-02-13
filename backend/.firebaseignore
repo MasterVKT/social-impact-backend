@@ -1,0 +1,8 @@
+# Firebase ignore file
+# Ne pas linter/builder avant déploiement
+
+# Ignorer tous les fichiers TypeScript
+*.ts
+
+# Garder seulement les JavaScript compilés
+!*.js

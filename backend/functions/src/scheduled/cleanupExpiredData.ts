@@ -4,6 +4,7 @@
  */
 
 import { pubsub } from 'firebase-functions';
+import { getStorage } from 'firebase-admin/storage';
 import { logger } from '../utils/logger';
 import { firestoreHelper } from '../utils/firestore';
 import { NotificationDocument, UserDocument } from '../types/firestore';
@@ -60,16 +61,16 @@ async function cleanupExpiredNotifications(): Promise<CleanupStats> {
       { limit: CLEANUP_CONFIG.BATCH_SIZE }
     );
 
-    stats.itemsProcessed = expiredNotifications.length;
+    stats.itemsProcessed = expiredNotifications.data.length;
 
-    if (expiredNotifications.length === 0) {
+    if (expiredNotifications.data.length === 0) {
       return stats;
     }
 
     // Traitement par lots
     const batchSize = 25;
-    for (let i = 0; i < expiredNotifications.length; i += batchSize) {
-      const batch = expiredNotifications.slice(i, i + batchSize);
+    for (let i = 0; i < expiredNotifications.data.length; i += batchSize) {
+      const batch = expiredNotifications.data.slice(i, i + batchSize);
 
       try {
         await firestoreHelper.runTransaction(async (transaction) => {
@@ -141,12 +142,12 @@ async function archiveOldNotifications(
       { limit: 100 }
     );
 
-    if (oldNotifications.length === 0) {
+    if (oldNotifications.data.length === 0) {
       return;
     }
 
     // Archiver par lots
-    const archivePromises = oldNotifications.map(async (notification) => {
+    const archivePromises = oldNotifications.data.map(async (notification) => {
       try {
         // Créer copie d'archive
         const archiveId = helpers.string.generateId('archive');
@@ -207,7 +208,7 @@ async function cleanupExpiredSessions(): Promise<CleanupStats> {
       { limit: 100 }
     );
 
-    for (const user of users) {
+    for (const user of users.data) {
       try {
         const expiredSessions = await firestoreHelper.queryDocuments<any>(
           `users/${user.uid}/sessions`,
@@ -217,11 +218,11 @@ async function cleanupExpiredSessions(): Promise<CleanupStats> {
           ]
         );
 
-        stats.itemsProcessed += expiredSessions.length;
+        stats.itemsProcessed += expiredSessions.data.length;
 
-        if (expiredSessions.length > 0) {
+        if (expiredSessions.data.length > 0) {
           // Marquer comme inactives et archiver
-          const updatePromises = expiredSessions.map(async (session) => {
+          const updatePromises = expiredSessions.data.map(async (session) => {
             try {
               await firestoreHelper.updateDocument(`users/${user.uid}/sessions`, session.id, {
                 active: false,
@@ -285,15 +286,52 @@ async function cleanupTempFiles(): Promise<CleanupStats> {
       { limit: CLEANUP_CONFIG.BATCH_SIZE }
     );
 
-    stats.itemsProcessed = tempUploads.length;
+    stats.itemsProcessed = tempUploads.data.length;
 
-    for (const upload of tempUploads) {
+    // Supprimer les fichiers dans Storage et Firestore
+    const storage = getStorage();
+    const bucket = storage.bucket();
+
+    for (const upload of tempUploads.data) {
       try {
-        // Marquer comme nettoyé (le nettoyage Storage sera fait séparément)
+        // Construire le chemin du fichier dans Storage
+        // Format: temp/{userId}/{uploadId}/{fileName}
+        const storagePath = upload.storagePath ||
+                           `temp/${upload.userId}/${upload.uploadId || upload.id}/${upload.fileName}`;
+
+        // Supprimer le fichier dans Storage
+        try {
+          const file = bucket.file(storagePath);
+          const [exists] = await file.exists();
+
+          if (exists) {
+            await file.delete();
+            logger.info('Deleted temp file from Storage', {
+              uploadId: upload.id,
+              storagePath,
+              fileSize: upload.fileSize
+            });
+          } else {
+            logger.warn('Temp file not found in Storage (already deleted or never uploaded)', {
+              uploadId: upload.id,
+              storagePath
+            });
+          }
+        } catch (storageError: any) {
+          // Erreur Storage non bloquante (fichier peut être déjà supprimé)
+          logger.warn('Failed to delete file from Storage (non-blocking)', storageError, {
+            uploadId: upload.id,
+            storagePath,
+            errorCode: storageError.code
+          });
+        }
+
+        // Marquer comme nettoyé dans Firestore
         await firestoreHelper.updateDocument('temp_uploads', upload.id, {
           status: 'cleaned',
           cleanedAt: now,
-          cleanedBy: 'system'
+          cleanedBy: 'system',
+          storageDeleted: true
         });
 
         stats.itemsDeleted++;
@@ -317,7 +355,7 @@ async function cleanupTempFiles(): Promise<CleanupStats> {
       { limit: CLEANUP_CONFIG.BATCH_SIZE }
     );
 
-    for (const cache of tempCaches) {
+    for (const cache of tempCaches.data) {
       try {
         await firestoreHelper.deleteDocument('temp_cache', cache.id);
         stats.itemsDeleted++;
@@ -363,9 +401,9 @@ async function archiveOldAnalytics(): Promise<CleanupStats> {
       { limit: CLEANUP_CONFIG.BATCH_SIZE }
     );
 
-    stats.itemsProcessed = oldAnalytics.length;
+    stats.itemsProcessed = oldAnalytics.data.length;
 
-    for (const analytics of oldAnalytics) {
+    for (const analytics of oldAnalytics.data) {
       try {
         // Créer archive
         const archiveId = helpers.string.generateId('analytics_archive');
@@ -435,10 +473,10 @@ async function cleanupOldLogs(): Promise<CleanupStats> {
           { limit: 200 }
         );
 
-        stats.itemsProcessed += oldLogs.length;
+        stats.itemsProcessed += oldLogs.data.length;
 
         // Supprimer les anciens logs par lots
-        const deletePromises = oldLogs.map(async (log) => {
+        const deletePromises = oldLogs.data.map(async (log) => {
           try {
             await firestoreHelper.deleteDocument(collection, log.id);
             stats.itemsDeleted++;
@@ -499,7 +537,7 @@ async function cleanupExpiredKYCData(): Promise<CleanupStats> {
       { limit: 50 }
     );
 
-    for (const user of users) {
+    for (const user of users.data) {
       try {
         const expiredKYCSessions = await firestoreHelper.queryDocuments<any>(
           `users/${user.uid}/kyc_sessions`,
@@ -509,9 +547,9 @@ async function cleanupExpiredKYCData(): Promise<CleanupStats> {
           ]
         );
 
-        stats.itemsProcessed += expiredKYCSessions.length;
+        stats.itemsProcessed += expiredKYCSessions.data.length;
 
-        for (const session of expiredKYCSessions) {
+        for (const session of expiredKYCSessions.data) {
           try {
             // Archiver les données sensibles
             const archiveId = helpers.string.generateId('kyc_archive');
@@ -594,10 +632,10 @@ async function cleanupExpiredTokens(): Promise<CleanupStats> {
           { limit: 500 }
         );
 
-        stats.itemsProcessed += expiredTokens.length;
+        stats.itemsProcessed += expiredTokens.data.length;
 
         // Supprimer les tokens expirés
-        const deletePromises = expiredTokens.map(async (token) => {
+        const deletePromises = expiredTokens.data.map(async (token) => {
           try {
             await firestoreHelper.updateDocument(tokenType, token.id, {
               status: 'expired',
@@ -706,9 +744,9 @@ async function cleanupExpiredCache(): Promise<CleanupStats> {
       { limit: 200 }
     );
 
-    stats.itemsProcessed += expiredRecommendations.length;
+    stats.itemsProcessed += expiredRecommendations.data.length;
 
-    const deletePromises = expiredRecommendations.map(async (recommendation) => {
+    const deletePromises = expiredRecommendations.data.map(async (recommendation) => {
       try {
         await firestoreHelper.deleteDocument('recommendation_cache', recommendation.id);
         stats.itemsDeleted++;
@@ -733,7 +771,7 @@ async function cleanupExpiredCache(): Promise<CleanupStats> {
       { limit: 200 }
     );
 
-    const searchDeletePromises = expiredSearchCache.map(async (searchItem) => {
+    const searchDeletePromises = expiredSearchCache.data.map(async (searchItem) => {
       try {
         await firestoreHelper.deleteDocument('search_cache', searchItem.id);
         stats.itemsDeleted++;
@@ -750,8 +788,8 @@ async function cleanupExpiredCache(): Promise<CleanupStats> {
 
     logger.info('Expired cache cleanup completed', {
       ...stats,
-      recommendationsCleaned: expiredRecommendations.length,
-      searchCachesCleaned: expiredSearchCache.length
+      recommendationsCleaned: expiredRecommendations.data.length,
+      searchCachesCleaned: expiredSearchCache.data.length
     });
 
   } catch (error) {
@@ -787,12 +825,12 @@ async function cleanupRateLimitData(): Promise<CleanupStats> {
       { limit: 1000 }
     );
 
-    stats.itemsProcessed = expiredRateLimits.length;
+    stats.itemsProcessed = expiredRateLimits.data.length;
 
     // Supprimer par lots
     const batchSize = 50;
-    for (let i = 0; i < expiredRateLimits.length; i += batchSize) {
-      const batch = expiredRateLimits.slice(i, i + batchSize);
+    for (let i = 0; i < expiredRateLimits.data.length; i += batchSize) {
+      const batch = expiredRateLimits.data.slice(i, i + batchSize);
 
       try {
         const deletePromises = batch.map(rateLimit =>

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc *:*)",
+      "Bash(cut *:*)",
+      "Bash(rm -rf *:*)",
+      "Bash(rm -rf build *:*)",
+      "Bash(sudo *)",
+      "Bash(firebase projects:list:*)",
+      "Bash(firebase use:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(firebase login:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(firebase --version:*)",
+      "Bash(firebase firestore:rules:*)",
+      "Bash(ls:*)",
+      "Bash(firebase login:list:*)",
+      "Bash(find:*)"
+    ]
+  }
+}

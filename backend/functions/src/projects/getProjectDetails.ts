@@ -104,7 +104,7 @@ async function enrichProjectWithStats(
         [['status', '==', 'confirmed']],
         { limit: 1000 }
       ).then(contributions => {
-        const uniqueContributors = new Set(contributions.map(c => c.contributorUid));
+        const uniqueContributors = new Set(contributions.data.map(c => c.contributorUid));
         return uniqueContributors.size;
       }),
 
@@ -114,9 +114,9 @@ async function enrichProjectWithStats(
         [['status', '==', 'confirmed']],
         { limit: 1000 }
       ).then(contributions => {
-        if (contributions.length === 0) return 0;
-        const total = contributions.reduce((sum, c) => sum + c.amount.gross, 0);
-        return Math.round(total / contributions.length);
+        if (contributions.data.length === 0) return 0;
+        const total = contributions.data.reduce((sum, c) => sum + c.amount.gross, 0);
+        return Math.round(total / contributions.data.length);
       }),
 
       // Activité récente (derniers 7 jours)
@@ -126,7 +126,7 @@ async function enrichProjectWithStats(
           ['status', '==', 'confirmed'],
           ['createdAt', '>=', helpers.date.subtractDays(new Date(), 7)]
         ]
-      ).then(contributions => contributions.length)
+      ).then(contributions => contributions.data.length)
     ]);
 
     // Calculer le momentum (tendance de financement)
@@ -206,7 +206,7 @@ async function getProjectContributions(
 
     // Filtrer les données sensibles si pas d'accès privé
     if (!canViewPrivate) {
-      return contributions.map(contribution => ({
+      return contributions.data.map(contribution => ({
         ...contribution,
         contributorUid: undefined, // Masquer l'identité
         contributorName: contribution.anonymous ? 'Anonyme' : 'Contributeur',
@@ -219,7 +219,7 @@ async function getProjectContributions(
       }));
     }
 
-    return contributions;
+    return contributions.data;
 
   } catch (error) {
     logger.error('Failed to get project contributions', error, { projectId });

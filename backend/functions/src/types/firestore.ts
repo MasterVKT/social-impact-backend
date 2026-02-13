@@ -105,11 +105,17 @@ export interface UserDocument extends BaseDocument {
       push: boolean;
       inApp: boolean;
       frequency: 'immediate' | 'daily' | 'weekly';
+      project_update?: {
+        email: boolean;
+        push: boolean;
+        inApp: boolean;
+      };
     };
     privacy: {
       profilePublic: boolean;
       showContributions: boolean;
       allowContact: boolean;
+      showProfile?: boolean;
     };
     interests: {
       categories: ProjectCategory[];
@@ -124,34 +130,44 @@ export interface UserDocument extends BaseDocument {
     projectsSupported: number;
     averageContribution: number;
     lastContributionAt?: Timestamp;
-    
+
     // Statistiques créateur
     projectsCreated: number;
     totalFundsRaised: number;
     successfulProjects: number;
     averageProjectSize: number;
     lastProjectAt?: Timestamp;
-    
+
     // Statistiques auditeur
     auditsCompleted: number;
     averageAuditTime: number;
     approvalRate: number;
     totalEarnings: number;
     lastAuditAt?: Timestamp;
-    
+
     // Engagement général
     profileViews: number;
     loginStreak: number;
     lastLoginAt: Timestamp;
+    notificationsSent?: number;
   };
   
   // Métadonnées système
   accountStatus: 'active' | 'suspended' | 'banned';
+  status?: 'active' | 'suspended' | 'banned'; // Alias pour accountStatus
   suspendedAt?: Timestamp;
   suspensionReason?: string;
   bannedAt?: Timestamp;
   banReason?: string;
-  
+
+  // Données d'inscription
+  registrationData?: {
+    source?: string;
+    referredBy?: string;
+    ipAddress?: string;
+    userAgent?: string;
+  };
+
   // Audit trail
   lastModifiedBy?: string;
   ipAddress?: string;
@@ -312,6 +328,55 @@ export interface ProjectDocument extends BaseDocument {
     emailUpdatesEnabled: boolean;
     autoRefundOnFailure: boolean;
   };
+
+  // Propriétés de compatibilité (legacy ou calculées)
+  currentFunding?: number;
+  fundingGoal?: number;
+  fundingStatus?: string;
+  contributors?: string[];
+  creatorUid?: string;
+  creatorName?: string;
+  creatorEmail?: string;
+  creatorDisplayName?: string;
+  creatorAvatar?: string;
+  description?: string;
+  urgency?: string;
+  milestones?: any[];
+  internationalScope?: boolean;
+  currentMilestone?: number;
+  deadline?: Timestamp | Date | string;
+  escrow?: {
+    totalHeld: number;
+    totalReleased: number;
+    pendingRelease: number;
+  };
+  acceptingContributions?: boolean;
+  validatedAt?: Timestamp;
+  conditionalApprovalAt?: Timestamp;
+  auditFailedAt?: Timestamp;
+  visibility?: 'public' | 'private' | 'draft';
+
+  // Propriétés additionnelles
+  team?: Array<{
+    uid: string;
+    role: string;
+    name?: string;
+  }>;
+  impactGoals?: {
+    primary: string;
+    secondary?: string[];
+  };
+  stats?: {
+    views: number;
+    shares: number;
+    favorites: number;
+    comments: number;
+    likes?: number;
+  };
+  publishedAt?: Timestamp;
+  uid?: string; // Alias pour id
+  stripeConnectAccountId?: string;
+  auditScore?: number;
 }
 
 /**
@@ -510,6 +575,20 @@ export interface ContributionDocument extends BaseDocument {
 /**
  * Document Audit - Collection /audits/{auditId}
  */
+/**
+ * Type pour la compensation d'audit
+ */
+export interface AuditCompensation {
+  baseAmount: number;
+  bonusAmount?: number;
+  totalAmount: number;
+  amount?: number; // Alias pour totalAmount
+  currency: Currency;
+  status: 'pending' | 'approved' | 'paid';
+  paidAt?: Timestamp;
+  invoiceRequired: boolean;
+}
+
 export interface AuditDocument extends BaseDocument {
   // Identifiants et références
   id: string;
@@ -517,7 +596,7 @@ export interface AuditDocument extends BaseDocument {
   projectTitle: string;
   creatorUid: string;
   creatorName: string;
-  
+
   // Auditeur
   auditor: {
     uid: string;
@@ -531,7 +610,7 @@ export interface AuditDocument extends BaseDocument {
       approvalRate: number;
     };
   };
-  
+
   // Configuration audit
   scope: {
     totalMilestones: number;
@@ -539,7 +618,7 @@ export interface AuditDocument extends BaseDocument {
     complexity: 'low' | 'medium' | 'high';
     specialRequirements?: string[];
   };
-  
+
   // Timeline
   timeline: {
     assignedAt: Timestamp;
@@ -551,20 +630,12 @@ export interface AuditDocument extends BaseDocument {
     processingTime?: number;
     isOverdue: boolean;
   };
-  
+
   // Statut global
   status: AuditStatus;
-  
+
   // Compensation
-  compensation: {
-    baseAmount: number;
-    bonusAmount?: number;
-    totalAmount: number;
-    currency: Currency;
-    status: 'pending' | 'approved' | 'paid';
-    paidAt?: Timestamp;
-    invoiceRequired: boolean;
-  };
+  compensation: AuditCompensation;
   
   // Résultats et performance
   results: {
@@ -606,6 +677,42 @@ export interface AuditDocument extends BaseDocument {
     reassignedAt: Timestamp;
     reassignedBy: string;
   }[];
+
+  // Propriétés de compatibilité (legacy ou calculées)
+  auditorUid?: string; // Alias pour auditor.uid
+  score?: number; // Score global de l'audit
+  findings?: Array<{
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    category: string;
+    description: string;
+    recommendation?: string;
+  }>;
+  recommendations?: string[];
+  estimatedCompensation?: number;
+  decision?: 'approved' | 'rejected' | 'conditional';
+
+  // Propriétés supplémentaires pour compatibilité
+  assignedAt?: Timestamp; // Alias pour timeline.assignedAt
+  assignedBy?: string; // UID de qui a assigné l'audit
+  deadline?: Timestamp; // Alias pour timeline.deadline
+  acceptedAt?: Timestamp; // Alias pour timeline.acceptedAt
+  completedAt?: Timestamp; // Alias pour timeline.completedAt
+  specializations?: string[]; // Alias pour auditor.specializations
+  requiredDocuments?: string[]; // Documents requis pour l'audit
+  criteria?: Array<{
+    category: string;
+    weight: number;
+    description?: string;
+  }>; // Critères d'évaluation
+
+  // Propriétés calculées
+  finalDecision?: 'approved' | 'rejected' | 'conditional';
+  finalScore?: number;
+  finalAmount?: number; // Alias pour compensation.totalAmount
+  completionTime?: number; // Temps de complétion en jours
+  timeSpent?: number; // Temps passé sur l'audit en heures
+  estimatedHours?: number; // Alias pour scope.estimatedHours
+  currentMilestone?: number; // Jalon en cours d'audit
 }
 
 /**
@@ -684,17 +791,57 @@ export interface TransactionDocument extends BaseDocument {
 }
 
 /**
+ * Document Payment - Alias pour Contribution (compatibilité)
+ */
+export type PaymentDocument = ContributionDocument & {
+  status?: PaymentStatus; // Alias pour payment.status
+};
+
+/**
+ * Document Escrow - Collection /escrow_records/{escrowId}
+ */
+export interface EscrowDocument extends BaseDocument {
+  // Identifiants
+  id: string;
+  paymentId: string;
+  projectId: string;
+  contributorUid: string;
+
+  // Montants
+  amount: number;
+  currency: Currency;
+  interest?: number; // Intérêts accumulés
+
+  // Statut
+  status: 'held' | 'released' | 'refunded' | 'disputed';
+  holdReason?: string;
+
+  // Conditions de libération
+  releaseConditions?: string[];
+  estimatedReleaseDate?: Date;
+
+  // Références externes
+  stripePaymentIntentId?: string;
+
+  // Métadonnées
+  releasedAt?: Timestamp;
+  refundedAt?: Timestamp;
+  lastInterestCalculation?: Timestamp;
+}
+
+/**
  * Document Notification - Collection /notifications/{notificationId}
  */
 export interface NotificationDocument extends BaseDocument {
   // Identifiants
   id: string;
   recipientUid: string;
-  
+  senderUid?: string;
+
   // Type et catégorie
   type: NotificationType;
-  subtype: string;
-  priority: 'low' | 'medium' | 'high' | 'urgent';
+  subtype?: string;
+  priority?: 'low' | 'medium' | 'high' | 'urgent';
   
   // Contenu
   title: string;
@@ -712,7 +859,7 @@ export interface NotificationDocument extends BaseDocument {
   };
   
   // Statuts
-  status: {
+  status?: {
     read: boolean;
     readAt?: Timestamp;
     clicked: boolean;
@@ -720,9 +867,9 @@ export interface NotificationDocument extends BaseDocument {
     dismissed: boolean;
     dismissedAt?: Timestamp;
   };
-  
+
   // Canaux de diffusion
-  channels: {
+  channels?: {
     inApp: {
       sent: boolean;
       sentAt?: Timestamp;
@@ -743,9 +890,9 @@ export interface NotificationDocument extends BaseDocument {
       delivered?: boolean;
     };
   };
-  
+
   // Planification
-  scheduling: {
+  scheduling?: {
     scheduleType: 'immediate' | 'delayed' | 'recurring';
     scheduledFor?: Timestamp;
     timezone?: string;
@@ -755,12 +902,12 @@ export interface NotificationDocument extends BaseDocument {
       endDate?: Timestamp;
     };
   };
-  
+
   // Métadonnées
-  source: 'system' | 'admin' | 'automated';
+  source?: 'system' | 'admin' | 'automated';
   batchId?: string;
   templateId?: string;
-  locale: string;
+  locale?: string;
   
   // Expiration
   expiresAt?: Timestamp;
@@ -770,12 +917,12 @@ export interface NotificationDocument extends BaseDocument {
 /**
  * Document System Config - Collection /system_config/{configType}
  */
-export interface SystemConfigDocument extends BaseDocument {
+export interface SystemConfigDocument extends Omit<BaseDocument, 'version'> {
   // Configuration générale
   id: string;
   type: 'platform_settings' | 'fee_structure' | 'limits' | 'categories' | 'kyc_config' | 'email_templates';
   environment: 'development' | 'staging' | 'production';
-  
+
   // Statut
   active: boolean;
   version: string;
@@ -804,8 +951,8 @@ export interface SystemConfigDocument extends BaseDocument {
  */
 export type DocumentWithId<T> = T & { id: string };
 
-export type PartialDocument<T> = Partial<T> & Pick<T, 'updatedAt'>;
+export type PartialDocument<T> = Partial<T> & { updatedAt: Timestamp };
 
 export type CreateDocument<T> = Omit<T, 'createdAt' | 'updatedAt' | 'version'>;
 
-export type UpdateDocument<T> = Partial<Omit<T, 'createdAt' | 'version'>> & Pick<T, 'updatedAt'>;
+export type UpdateDocument<T> = Partial<Omit<T, 'createdAt' | 'version'>> & { updatedAt: Timestamp };

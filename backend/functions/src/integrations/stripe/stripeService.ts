@@ -27,21 +27,36 @@ const STRIPE_CONFIG = {
 export class StripeService {
   private stripe: Stripe;
   private webhookSecret: string;
+  private initialized = false;
 
   constructor() {
-    const secretKey = process.env.STRIPE_SECRET_KEY;
+    // Don't initialize here - use lazy initialization
     this.webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+  }
 
+  /**
+   * Initialize Stripe client lazily when first used
+   */
+  private initialize(): void {
+    if (this.initialized) return;
+
+    const secretKey = process.env.STRIPE_SECRET_KEY;
     if (!secretKey) {
       throw new Error('STRIPE_SECRET_KEY environment variable is required');
     }
 
     this.stripe = new Stripe(secretKey, STRIPE_CONFIG);
-    
+
     logger.info('Stripe service initialized', {
       environment: secretKey.startsWith('sk_live_') ? 'live' : 'test',
       apiVersion: STRIPE_CONFIG.apiVersion,
     });
+
+    this.initialized = true;
+  }
+
+  private ensureInitialized(): void {
+    this.initialize();
   }
 
   /**
@@ -56,6 +71,7 @@ export class StripeService {
     description: string;
     metadata?: Record<string, string>;
   }): Promise<StripeTypes.PaymentIntent> {
+    this.ensureInitialized();
     try {
       // Validation du montant
       if (!helpers.validation.validateAmount(params.amount)) {

@@ -28,10 +28,19 @@ export class SumsubService {
   private client: AxiosInstance;
   private appToken: string;
   private secretKey: string;
+  private initialized = false;
 
   constructor() {
+    // Don't initialize here - use lazy initialization
     this.appToken = process.env.SUMSUB_APP_TOKEN || '';
     this.secretKey = process.env.SUMSUB_SECRET_KEY || '';
+  }
+
+  /**
+   * Lazily initialize Axios client and credentials
+   */
+  private initialize(): void {
+    if (this.initialized) return;
 
     if (!this.appToken || !this.secretKey) {
       throw new Error('SUMSUB_APP_TOKEN and SUMSUB_SECRET_KEY environment variables are required');
@@ -42,12 +51,12 @@ export class SumsubService {
       timeout: SUMSUB_CONFIG.timeout,
     });
 
-    // Intercepteur pour ajouter l'authentification
+    // Interceptor to add auth headers
     this.client.interceptors.request.use((config) => {
       return this.addAuthHeaders(config);
     });
 
-    // Intercepteur pour logger les erreurs
+    // Interceptor to log errors
     this.client.interceptors.response.use(
       (response) => response,
       (error) => {
@@ -68,6 +77,12 @@ export class SumsubService {
       baseURL: SUMSUB_CONFIG.baseURL,
       hasCredentials: !!(this.appToken && this.secretKey),
     });
+
+    this.initialized = true;
+  }
+
+  private ensureInitialized(): void {
+    this.initialize();
   }
 
   /**
@@ -107,6 +122,7 @@ export class SumsubService {
    * Crée un nouvel applicant Sumsub
    */
   async createApplicant(params: SumsubTypes.CreateApplicantRequest): Promise<SumsubTypes.Applicant> {
+    this.ensureInitialized();
     try {
       const response = await withRetry(
         () => this.client.post('/resources/applicants', params),

@@ -96,7 +96,16 @@ export class DataEncryptionSystem {
       }
     };
 
-    this.initializeEncryptionSystem();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private initialized = false;
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeEncryptionSystem();
+      this.initialized = true;
+    }
   }
 
   async encryptData(
@@ -108,6 +117,7 @@ export class DataEncryptionSystem {
       compression?: boolean;
     }
   ): Promise<EncryptedData> {
+    await this.ensureInitialized();
     try {
       // Check if encryption is required for this data type
       const typeConfig = this.config.dataClassification[dataType];

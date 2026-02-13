@@ -33,7 +33,7 @@ export class AppError extends BaseError {
   public readonly code: string;
   public readonly statusCode: number;
   public readonly errorCode: string;
-  public readonly isOperational = true;
+  public readonly isOperational: boolean = true;
 
   constructor(code: string, message: string, statusCode: number = 500, context?: Record<string, any>) {
     super(message, context);

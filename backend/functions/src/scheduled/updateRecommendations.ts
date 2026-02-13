@@ -106,14 +106,14 @@ async function analyzeUserBehavior(user: UserDocument): Promise<UserAnalysis> {
         { limit: 50 }
       );
 
-      if (contributions.length > 0) {
-        behavior.avgContributionAmount = contributions.reduce((sum, c) => sum + c.amount, 0) / contributions.length;
-        
+      if (contributions.data.length > 0) {
+        behavior.avgContributionAmount = contributions.data.reduce((sum, c) => sum + c.amount, 0) / contributions.data.length;
+
         // Analyser les catégories préférées
         const categoryFreq = new Map<string, number>();
         const projectTypeFreq = new Map<string, number>();
-        
-        for (const contrib of contributions) {
+
+        for (const contrib of contributions.data) {
           try {
             const project = await firestoreHelper.getDocument<ProjectDocument>('projects', contrib.projectId);
             if (project) {
@@ -135,10 +135,10 @@ async function analyzeUserBehavior(user: UserDocument): Promise<UserAnalysis> {
           .map(entry => entry[0]);
 
         // Calculer la fréquence d'activité
-        const daysActive = contributions.length > 1 ? 
-          Math.ceil((contributions[0].confirmedAt.getTime() - contributions[contributions.length - 1].confirmedAt.getTime()) / (24 * 60 * 60 * 1000)) : 1;
-        
-        const activityRate = contributions.length / Math.max(daysActive, 1);
+        const daysActive = contributions.data.length > 1 ?
+          Math.ceil((contributions.data[0].confirmedAt.getTime() - contributions.data[contributions.data.length - 1].confirmedAt.getTime()) / (24 * 60 * 60 * 1000)) : 1;
+
+        const activityRate = contributions.data.length / Math.max(daysActive, 1);
         
         if (activityRate > 0.1) behavior.activityFrequency = 'high';
         else if (activityRate > 0.03) behavior.activityFrequency = 'medium';
@@ -146,7 +146,7 @@ async function analyzeUserBehavior(user: UserDocument): Promise<UserAnalysis> {
 
         // Taux de succès basé sur les projets financés avec succès
         const successfulProjects = await Promise.all(
-          contributions.map(async (contrib) => {
+          contributions.data.map(async (contrib) => {
             try {
               const project = await firestoreHelper.getDocument<ProjectDocument>('projects', contrib.projectId);
               return project && project.status === STATUS.PROJECT.COMPLETED;
@@ -155,7 +155,7 @@ async function analyzeUserBehavior(user: UserDocument): Promise<UserAnalysis> {
             }
           })
         );
-        behavior.successRate = successfulProjects.filter(Boolean).length / contributions.length;
+        behavior.successRate = successfulProjects.filter(Boolean).length / contributions.data.length;
       }
     }
 
@@ -230,10 +230,10 @@ async function generateProjectRecommendations(analysis: UserAnalysis): Promise<G
         ['status', 'in', ['pending', 'confirmed']]
       ]
     );
-    const contributedProjectIds = new Set(userContributions.map(c => c.projectId));
+    const contributedProjectIds = new Set(userContributions.data.map(c => c.projectId));
 
     // Scorer chaque projet
-    for (const project of matchingProjects) {
+    for (const project of matchingProjects.data) {
       if (contributedProjectIds.has(project.id)) {
         continue; // Skip les projets déjà contribués
       }
@@ -342,7 +342,7 @@ async function generateAuditorRecommendations(analysis: UserAnalysis): Promise<G
     const userQualifications = user.qualifications || [];
     const userSpecializations = user.specializations || [];
 
-    for (const audit of availableAudits) {
+    for (const audit of availableAudits.data) {
       let score = 0;
       const reasoning: string[] = [];
 
@@ -449,7 +449,7 @@ async function generateCreatorRecommendations(analysis: UserAnalysis): Promise<G
       { limit: 20 }
     );
 
-    for (const project of userProjects) {
+    for (const project of userProjects.data) {
       const reasoning: string[] = [];
       let score = 0;
 
@@ -703,22 +703,22 @@ async function cleanupExpiredRecommendations(): Promise<number> {
       { limit: 200 }
     );
 
-    if (expiredRecommendations.length === 0) {
+    if (expiredRecommendations.data.length === 0) {
       return 0;
     }
 
     // Supprimer par lots
-    const deletePromises = expiredRecommendations.map(rec =>
+    const deletePromises = expiredRecommendations.data.map(rec =>
       firestoreHelper.deleteDocument('recommendation_cache', rec.id)
     );
 
     await Promise.allSettled(deletePromises);
 
     logger.info('Expired recommendations cleaned up', {
-      expiredCount: expiredRecommendations.length
+      expiredCount: expiredRecommendations.data.length
     });
 
-    return expiredRecommendations.length;
+    return expiredRecommendations.data.length;
 
   } catch (error) {
     logger.error('Failed to cleanup expired recommendations', error);
@@ -892,7 +892,7 @@ async function getEligibleUsersForRecommendations(): Promise<UserDocument[]> {
     );
 
     // Filtrer selon la fréquence de mise à jour
-    const eligibleUsers = users.filter(user => {
+    const eligibleUsers = users.data.filter(user => {
       const lastUpdate = user.recommendationStats?.lastUpdate;
       
       if (!lastUpdate) {
@@ -903,7 +903,7 @@ async function getEligibleUsersForRecommendations(): Promise<UserDocument[]> {
     });
 
     logger.info('Eligible users for recommendations retrieved', {
-      totalUsers: users.length,
+      totalUsers: users.data.length,
       eligibleUsers: eligibleUsers.length,
       updateThresholdHours: RECOMMENDATION_CONFIG.UPDATE_FREQUENCY_HOURS
     });

@@ -294,11 +294,13 @@ async function executeGetProjectsByCreator(
   }
 
   // Récupérer les projets
-  let projects = await firestoreHelper.queryDocuments<ProjectDocument>(
+  const projectsResult = await firestoreHelper.queryDocuments<ProjectDocument>(
     'projects',
     filters,
     queryOptions
   );
+
+  let projects = projectsResult.data;
 
   // Tri côté client si nécessaire
   if (data.sortBy === 'funding_progress') {

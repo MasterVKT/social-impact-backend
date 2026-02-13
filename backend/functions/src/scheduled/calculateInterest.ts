@@ -59,7 +59,7 @@ async function getEligibleEscrowRecords(): Promise<EscrowDocument[]> {
 
     // Filtrer ceux qui n'ont pas été calculés récemment
     const now = new Date();
-    const eligibleRecords = escrowRecords.filter(record => {
+    const eligibleRecords = escrowRecords.data.filter(record => {
       if (!record.lastInterestCalculation) {
         return true; // Jamais calculé
       }
@@ -72,7 +72,7 @@ async function getEligibleEscrowRecords(): Promise<EscrowDocument[]> {
     });
 
     logger.info('Eligible escrow records retrieved', {
-      totalRecords: escrowRecords.length,
+      totalRecords: escrowRecords.data.length,
       eligibleRecords: eligibleRecords.length,
       batchSize: INTEREST_CONFIG.MAX_BATCH_SIZE
     });
@@ -500,14 +500,14 @@ async function validateInterestIntegrity(): Promise<void> {
       firestoreHelper.getDocument('platform_stats', 'global')
     ]);
 
-    const calculatedEscrowTotal = escrowTotal.reduce(
-      (sum, record) => sum + (record.amount + (record.accruedInterest || 0)), 
+    const calculatedEscrowTotal = escrowTotal.data.reduce(
+      (sum, record) => sum + (record.amount + (record.accruedInterest || 0)),
       0
     );
 
     const recordedInterestTotal = interestTotal.interest?.totalAccrued || 0;
-    const calculatedInterestTotal = escrowTotal.reduce(
-      (sum, record) => sum + (record.accruedInterest || 0), 
+    const calculatedInterestTotal = escrowTotal.data.reduce(
+      (sum, record) => sum + (record.accruedInterest || 0),
       0
     );
 
@@ -519,7 +519,7 @@ async function validateInterestIntegrity(): Promise<void> {
         recordedTotal: recordedInterestTotal,
         calculatedTotal: calculatedInterestTotal,
         discrepancy: interestDiscrepancy,
-        escrowRecordsChecked: escrowTotal.length
+        escrowRecordsChecked: escrowTotal.data.length
       });
 
       // Créer ticket de support pour investigation
@@ -534,7 +534,7 @@ async function validateInterestIntegrity(): Promise<void> {
           recordedTotal: recordedInterestTotal,
           calculatedTotal: calculatedInterestTotal,
           discrepancy: interestDiscrepancy,
-          escrowRecordsAffected: escrowTotal.length
+          escrowRecordsAffected: escrowTotal.data.length
         },
         status: 'open',
         assignedTo: null,
@@ -544,7 +544,7 @@ async function validateInterestIntegrity(): Promise<void> {
     }
 
     logger.info('Interest integrity validation completed', {
-      escrowRecordsChecked: escrowTotal.length,
+      escrowRecordsChecked: escrowTotal.data.length,
       calculatedEscrowTotal,
       calculatedInterestTotal,
       recordedInterestTotal,
@@ -573,12 +573,12 @@ async function cleanupOldInterestCalculations(): Promise<void> {
       { limit: 100 }
     );
 
-    if (oldCalculations.length === 0) {
+    if (oldCalculations.data.length === 0) {
       return;
     }
 
     // Archiver avant suppression
-    const archivePromises = oldCalculations.map(calc =>
+    const archivePromises = oldCalculations.data.map(calc =>
       firestoreHelper.setDocument(`archives/interest_calculations/${calc.id}`, 'data', {
         ...calc,
         archivedAt: new Date(),
@@ -589,14 +589,14 @@ async function cleanupOldInterestCalculations(): Promise<void> {
     await Promise.all(archivePromises);
 
     // Supprimer les anciens enregistrements
-    const deletePromises = oldCalculations.map(calc =>
+    const deletePromises = oldCalculations.data.map(calc =>
       firestoreHelper.deleteDocument('interest_calculations', calc.id)
     );
 
     await Promise.all(deletePromises);
 
     logger.info('Old interest calculations cleaned up', {
-      recordsArchived: oldCalculations.length,
+      recordsArchived: oldCalculations.data.length,
       cutoffDate: threeMonthsAgo
     });
 

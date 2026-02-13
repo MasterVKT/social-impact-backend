@@ -30,13 +30,15 @@ export class EmailService {
   private initialized: boolean = false;
 
   constructor() {
-    this.initialize();
+    // Don't initialize here - use lazy initialization
   }
 
   /**
    * Initialise le service SendGrid
    */
   private initialize(): void {
+    if (this.initialized) return;
+    
     const apiKey = process.env.SENDGRID_API_KEY;
 
     if (!apiKey) {
@@ -47,6 +49,8 @@ export class EmailService {
     
     // Configuration des timeouts et retry
     sgMail.setTimeout(SENDGRID_CONFIG.timeout);
+
+    this.initialized = true;
 
     this.initialized = true;
 
@@ -61,7 +65,7 @@ export class EmailService {
    */
   async sendEmail(params: {
     to: string | SendGridTypes.EmailAddress;
-    subject: string;
+    subject?: string;
     text?: string;
     html?: string;
     from?: SendGridTypes.EmailAddress;
@@ -78,7 +82,7 @@ export class EmailService {
       const emailRequest: SendGridTypes.EmailRequest = {
         to: params.to,
         from: params.from || SENDGRID_CONFIG.defaultFrom,
-        subject: params.subject,
+        ...(params.subject && { subject: params.subject }),
         text: params.text,
         html: params.html,
         replyTo: params.replyTo,
@@ -531,7 +535,8 @@ export class EmailService {
    */
   private validateInitialization(): void {
     if (!this.initialized) {
-      throw new Error('EmailService not properly initialized');
+      // Lazy initialize only when actually used
+      this.initialize();
     }
   }
 }

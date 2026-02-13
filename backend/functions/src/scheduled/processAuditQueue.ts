@@ -76,14 +76,14 @@ async function getPendingAuditRequests(): Promise<PendingAuditRequest[]> {
     );
 
     logger.info('Pending audit requests retrieved', {
-      totalFound: pendingRequests.length,
-      byStatus: pendingRequests.reduce((counts, req) => {
+      totalFound: pendingRequests.data.length,
+      byStatus: pendingRequests.data.reduce((counts, req) => {
         counts[req.status] = (counts[req.status] || 0) + 1;
         return counts;
       }, {} as Record<string, number>)
     });
 
-    return pendingRequests;
+    return pendingRequests.data;
 
   } catch (error) {
     logger.error('Failed to get pending audit requests', error);
@@ -111,12 +111,12 @@ async function findQualifiedAuditors(auditRequest: PendingAuditRequest): Promise
       { limit: 100 }
     );
 
-    if (allAuditors.length === 0) {
+    if (allAuditors.data.length === 0) {
       return [];
     }
 
     // Filtrer par qualifications requises
-    const qualifiedAuditors = allAuditors.filter(auditor => {
+    const qualifiedAuditors = allAuditors.data.filter(auditor => {
       const auditorQualifications = auditor.qualifications || [];
       const hasRequiredQualifications = auditRequest.requiredQualifications.every(qual =>
         auditorQualifications.includes(qual)
@@ -398,7 +398,7 @@ async function escalateUnassignedAudit(
       ['preferences.alerts.audit', '==', true]
     ]);
 
-    const adminNotificationPromises = admins.map(async (admin) => {
+    const adminNotificationPromises = admins.data.map(async (admin) => {
       const notificationId = helpers.string.generateId('notif');
       
       return firestoreHelper.setDocument('notifications', notificationId, {
@@ -435,7 +435,7 @@ async function escalateUnassignedAudit(
       escalationId,
       auditRequestId: auditRequest.id,
       reason,
-      adminsNotified: admins.length
+      adminsNotified: admins.data.length
     });
 
   } catch (error) {

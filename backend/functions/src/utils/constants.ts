@@ -168,11 +168,24 @@ export const STATUS = {
     DRAFT: 'draft',
     UNDER_REVIEW: 'under_review',
     LIVE: 'live',
+    FUNDING: 'funding', // Phase de financement active
     FUNDED: 'funded',
     ACTIVE: 'active',
     COMPLETED: 'completed',
     FAILED: 'failed',
     CANCELLED: 'cancelled',
+    SUSPENDED: 'suspended',
+    VALIDATED: 'validated',
+    CONDITIONAL_APPROVAL: 'conditional_approval',
+    AUDIT_FAILED: 'audit_failed',
+  },
+
+  MODERATION: {
+    PENDING: 'pending',
+    APPROVED: 'approved',
+    REJECTED: 'rejected',
+    FLAGGED: 'flagged',
+    IN_REVIEW: 'in_review',
   },
   
   CONTRIBUTION: {
@@ -190,6 +203,7 @@ export const STATUS = {
     APPROVED: 'approved',
     REJECTED: 'rejected',
     REVISION_REQUESTED: 'needs_revision',
+    COMPLETED: 'completed',
   },
   
   AUDIT: {
@@ -273,6 +287,47 @@ export const USER_TYPES = {
 } as const;
 
 /**
+ * Permissions utilisateur
+ */
+export const USER_PERMISSIONS = {
+  // Permissions projets
+  VIEW_PROJECTS: 'project.view',
+  CREATE_PROJECT: 'project.create',
+  UPDATE_OWN_PROJECT: 'project.update_own',
+  VIEW_OWN_PROJECT: 'project.view_own',
+  MODERATE_PROJECTS: 'project.moderate',
+  DELETE_PROJECT: 'project.delete',
+
+  // Permissions contributions
+  CREATE_CONTRIBUTION: 'contribution.create',
+  VIEW_OWN_CONTRIBUTION: 'contribution.view_own',
+  VIEW_ALL_CONTRIBUTIONS: 'contribution.view_all',
+  REFUND_CONTRIBUTION: 'contribution.refund',
+
+  // Permissions milestones
+  SUBMIT_MILESTONE: 'milestone.submit',
+  APPROVE_MILESTONE: 'milestone.approve',
+  REJECT_MILESTONE: 'milestone.reject',
+
+  // Permissions audit
+  ACCEPT_AUDIT: 'audit.accept',
+  EVALUATE_AUDIT: 'audit.evaluate',
+  ASSIGN_AUDIT: 'audit.assign',
+  AUDIT_PROJECT: 'audit.project',
+
+  // Permissions utilisateurs
+  UPDATE_OWN_PROFILE: 'profile.update_own',
+  MANAGE_USERS: 'user.manage',
+
+  // Permissions système
+  CONFIGURE_SYSTEM: 'system.configure',
+  VIEW_ALL_ANALYTICS: 'analytics.view_all',
+
+  // Super permission
+  ALL: '*',
+} as const;
+
+/**
  * Configuration KYC
  */
 export const KYC_CONFIG = {
@@ -298,7 +353,7 @@ export const KYC_CONFIG = {
       sumsubLevelName: 'enhanced-kyc-level',
     },
   },
-  
+
   DOCUMENT_TYPES: {
     PASSPORT: 'passport',
     ID_CARD: 'id_card',
@@ -306,6 +361,13 @@ export const KYC_CONFIG = {
     PROOF_OF_ADDRESS: 'proof_of_address',
     SELFIE: 'selfie',
   },
+
+  REQUIRED_DOCUMENTS: {
+    CONTRIBUTOR: ['identity_document'],
+    CREATOR: ['identity_document', 'proof_of_address'],
+  },
+
+  MAX_ATTEMPTS: 3,
 } as const;
 
 /**
@@ -396,6 +458,53 @@ export const AUDIT_CONFIG = {
     QUALITY_BONUS: 5000, // 50€ bonus qualité
     SPEED_BONUS: 3000, // 30€ bonus rapidité
   },
+
+  // Seuils d'approbation
+  MIN_APPROVAL_SCORE: 70,
+  FULL_APPROVAL_SCORE: 85,
+  DEFAULT_COMPENSATION: 20000,
+
+  // Estimations d'heures par catégorie
+  ESTIMATED_HOURS_BY_CATEGORY: {
+    environment: 40,
+    education: 35,
+    health: 45,
+    community: 30,
+    technology: 50,
+  } as const,
+  DEFAULT_ESTIMATED_HOURS: 35,
+} as const;
+
+/**
+ * Configuration escrow (fonds en garantie)
+ */
+export const ESCROW_CONFIG = {
+  // Pourcentages de retenue
+  HOLD_PERCENTAGE: 20, // 20% des fonds retenus jusqu'à validation
+  RELEASE_ON_APPROVAL: 100, // 100% relâché si audit approuvé
+  RELEASE_ON_PARTIAL: 50, // 50% relâché si audit partiel
+
+  // Délais
+  AUTO_RELEASE_DAYS: 30, // Libération automatique après 30 jours
+  DISPUTE_WINDOW_DAYS: 7, // Fenêtre de contestation de 7 jours
+} as const;
+
+/**
+ * Configuration paiements
+ */
+export const PAYMENT_CONFIG = {
+  // Limites
+  MIN_CONTRIBUTION: 500, // 5€ minimum
+  MAX_CONTRIBUTION: 1000000, // 10000€ maximum
+
+  // Frais
+  PLATFORM_FEE_PERCENTAGE: 5, // 5% de frais de plateforme
+  STRIPE_FEE_PERCENTAGE: 1.4, // 1.4% + 0.25€ frais Stripe
+  STRIPE_FEE_FIXED: 25, // 0.25€ en centimes
+
+  // Délais
+  REFUND_WINDOW_DAYS: 14, // 14 jours pour demander un remboursement
+  PAYOUT_DELAY_DAYS: 2, // 2 jours de délai avant versement
 } as const;
 
 /**
@@ -527,4 +636,139 @@ export const ANALYTICS = {
       'payment_completed',
     ],
   },
+} as const;
+
+/**
+ * Configuration de nettoyage des données
+ */
+export const CLEANUP_CONFIG = {
+  // Délais de conservation (en jours)
+  NOTIFICATION_RETENTION_DAYS: 90,
+  SESSION_RETENTION_DAYS: 30,
+  LOG_RETENTION_DAYS: 365,
+  EXPIRED_TOKEN_RETENTION_DAYS: 7,
+
+  // Tailles de lot pour le nettoyage
+  BATCH_SIZE: 500,
+  MAX_DELETE_PER_RUN: 10000,
+} as const;
+
+/**
+ * Politique de rétention des données
+ */
+export const RETENTION_POLICY = {
+  NOTIFICATIONS: {
+    READ: 30, // jours
+    UNREAD: 90, // jours
+    SYSTEM: 365, // jours
+  },
+  SESSIONS: {
+    ACTIVE: 7, // jours
+    INACTIVE: 30, // jours
+  },
+  LOGS: {
+    ERROR: 365, // jours
+    INFO: 90, // jours
+    DEBUG: 30, // jours
+  },
+  AUDIT_TRAIL: {
+    FINANCIAL: -1, // infini (jamais supprimé)
+    SECURITY: 730, // 2 ans
+    GENERAL: 365, // 1 an
+  },
+} as const;
+
+/**
+ * Configuration des intérêts sur escrow
+ */
+export const INTEREST_CONFIG = {
+  // Taux d'intérêt annuels (en pourcentage)
+  ANNUAL_RATE: 2.5,
+
+  // Taux d'intérêt par catégorie de projet (en décimal)
+  RATES: {
+    ENVIRONMENT: 0.03,   // 3% pour environnement
+    EDUCATION: 0.025,    // 2.5% pour éducation
+    HEALTH: 0.035,       // 3.5% pour santé
+    COMMUNITY: 0.02,     // 2% pour communauté
+    TECHNOLOGY: 0.015,   // 1.5% pour technologie
+  } as const,
+
+  // Seuils pour les intérêts
+  MIN_BALANCE_FOR_INTEREST: 1000, // 10€ minimum
+
+  // Fréquence de calcul
+  CALCULATION_FREQUENCY: 'monthly' as const,
+
+  // Distribution
+  CREATOR_SHARE: 100, // 100% des intérêts au créateur
+  PLATFORM_SHARE: 0,
+} as const;
+
+/**
+ * Configuration pour les métriques de la plateforme
+ */
+export const METRICS_CONFIG = {
+  // Fréquence de synchronisation
+  SYNC_INTERVAL_MINUTES: 60,
+  
+  // Métriques à collecter
+  TRACK_USERS: true,
+  TRACK_PROJECTS: true,
+  TRACK_CONTRIBUTIONS: true,
+  TRACK_AUDITS: true,
+  
+  // Rétention des données
+  RETENTION_DAYS: 90,
+} as const;
+
+/**
+ * Configuration pour le système de recommandations
+ */
+export const RECOMMENDATION_CONFIG = {
+  // Nombre de recommandations par utilisateur
+  MAX_RECOMMENDATIONS: 10,
+  
+  // Fréquence de mise à jour
+  UPDATE_INTERVAL_HOURS: 24,
+  
+  // Poids des facteurs de recommandation
+  WEIGHTS: {
+    CATEGORY_MATCH: 0.3,
+    IMPACT_AREA_MATCH: 0.25,
+    CONTRIBUTION_HISTORY: 0.2,
+    TRENDING: 0.15,
+    RECENCY: 0.1,
+  },
+  
+  // Seuils
+  MIN_SCORE: 50,
+  MIN_DAYS_SINCE_LAST_UPDATE: 1,
+} as const;
+
+/**
+ * Configuration pour les projets tendances
+ */
+export const TRENDING_CONFIG = {
+  // Nombre de projets tendances à tracker
+  MAX_TRENDING_PROJECTS: 20,
+  
+  // Période d'analyse (en jours)
+  ANALYSIS_PERIOD_DAYS: 7,
+  
+  // Fréquence de mise à jour
+  UPDATE_INTERVAL_HOURS: 6,
+  
+  // Poids des facteurs de tendance
+  WEIGHTS: {
+    RECENT_CONTRIBUTIONS: 0.35,
+    GROWTH_RATE: 0.25,
+    SOCIAL_ENGAGEMENT: 0.2,
+    MOMENTUM: 0.15,
+    RECENCY: 0.05,
+  },
+  
+  // Seuils
+  MIN_SCORE: 60,
+  MIN_CONTRIBUTIONS: 3,
 } as const;

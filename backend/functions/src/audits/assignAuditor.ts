@@ -15,7 +15,7 @@ import { emailService } from '../integrations/sendgrid/emailService';
 import { AuditsAPI } from '../types/api';
 import { ProjectDocument, UserDocument, AuditDocument } from '../types/firestore';
 import { helpers } from '../utils/helpers';
-import { STATUS, USER_PERMISSIONS, AUDIT_CONFIG } from '../utils/constants';
+import { STATUS, USER_PERMISSIONS, AUDIT_CONFIG, LIMITS } from '../utils/constants';
 
 /**
  * Schéma de validation pour la requête
@@ -27,7 +27,7 @@ const requestSchema = Joi.object({
     'financial', 'technical', 'environmental', 'social', 'legal', 'compliance'
   )).min(1).required(),
   deadline: Joi.string().isoDate().required(),
-  compensation: Joi.number().min(AUDIT_CONFIG.MIN_COMPENSATION).max(AUDIT_CONFIG.MAX_COMPENSATION).optional(),
+  compensation: Joi.number().min(AUDIT_CONFIG.COMPENSATION.BASE_AMOUNT).max(LIMITS.PROJECT.MAX_FUNDING_GOAL).optional(),
   priority: Joi.string().valid('low', 'medium', 'high').default('medium'),
   assignmentNotes: Joi.string().max(1000).optional(),
 }).required();
@@ -127,20 +127,20 @@ async function validateAuditorEligibility(
     );
 
     const maxConcurrentAudits = auditor.auditor?.maxConcurrentAudits || AUDIT_CONFIG.DEFAULT_MAX_CONCURRENT;
-    if (currentAudits.length >= maxConcurrentAudits) {
-      throw new https.HttpsError('failed-precondition', 
+    if (currentAudits.data.length >= maxConcurrentAudits) {
+      throw new https.HttpsError('failed-precondition',
         `Auditor has reached maximum concurrent audits limit (${maxConcurrentAudits})`);
     }
 
     // Vérifier les critères de compensation
     if (compensation) {
       const minRate = auditor.auditor?.minHourlyRate || 0;
-      const estimatedHours = AUDIT_CONFIG.ESTIMATED_HOURS_BY_CATEGORY[projectCategory] || 
+      const estimatedHours = AUDIT_CONFIG.ESTIMATED_HOURS_BY_CATEGORY[projectCategory] ||
                            AUDIT_CONFIG.DEFAULT_ESTIMATED_HOURS;
       const minCompensation = minRate * estimatedHours;
 
       if (compensation < minCompensation) {
-        throw new https.HttpsError('invalid-argument', 
+        throw new https.HttpsError('invalid-argument',
           `Compensation below auditor's minimum rate. Required: €${minCompensation}`);
       }
     }
@@ -149,7 +149,7 @@ async function validateAuditorEligibility(
       auditorUid,
       specializations,
       projectCategory,
-      currentAudits: currentAudits.length,
+      currentAudits: currentAudits.data.length,
       maxConcurrent: maxConcurrentAudits,
     });
 
@@ -179,14 +179,14 @@ async function checkConflictsOfInterest(
       { limit: 1 }
     );
 
-    if (auditorContributions.length > 0) {
-      throw new https.HttpsError('failed-precondition', 
+    if (auditorContributions.data.length > 0) {
+      throw new https.HttpsError('failed-precondition',
         'Auditor cannot audit a project they have contributed to');
     }
 
     // Vérifier les relations avec le créateur
     const auditor = await firestoreHelper.getDocument<UserDocument>('users', auditorUid);
-    
+
     // Vérifier si l'auditeur et le créateur ont des projets en commun
     const sharedProjects = await firestoreHelper.queryDocuments<ProjectDocument>(
       'projects',
@@ -199,13 +199,13 @@ async function checkConflictsOfInterest(
       { limit: 1 }
     );
 
-    if (sharedProjects.length > 0) {
+    if (sharedProjects.data.length > 0) {
       logger.warn('Potential conflict of interest detected', {
         auditorUid,
         creatorUid: project.creatorUid,
-        sharedProjectsCount: sharedProjects.length,
+        sharedProjectsCount: sharedProjects.data.length,
       });
-      
+
       // Log but don't block - à évaluer au cas par cas
     }
 
@@ -219,16 +219,16 @@ async function checkConflictsOfInterest(
       { limit: 5 }
     );
 
-    if (previousAudits.length >= AUDIT_CONFIG.MAX_AUDITS_SAME_CREATOR) {
-      throw new https.HttpsError('failed-precondition', 
+    if (previousAudits.data.length >= AUDIT_CONFIG.MAX_AUDITS_SAME_CREATOR) {
+      throw new https.HttpsError('failed-precondition',
         `Auditor has already audited ${AUDIT_CONFIG.MAX_AUDITS_SAME_CREATOR} projects from this creator`);
     }
 
     logger.info('Conflict of interest check completed', {
       auditorUid,
       projectId: project.uid,
-      previousAudits: previousAudits.length,
-      hasContributed: auditorContributions.length > 0,
+      previousAudits: previousAudits.data.length,
+      hasContributed: auditorContributions.data.length > 0,
     });
 
   } catch (error) {

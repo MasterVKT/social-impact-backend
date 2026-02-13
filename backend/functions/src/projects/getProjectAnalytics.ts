@@ -116,9 +116,10 @@ async function getContributionsAnalytics(
   try {
     const contributionsSnapshot = await admin
       .firestore()
+      .collection('projects')
+      .doc(projectId)
       .collection('contributions')
-      .where('projectId', '==', projectId)
-      .where('payment.status', '==', 'confirmed')
+      .where('payment.processorStatus', '==', 'succeeded')
       .orderBy('createdAt', 'desc')
       .get();
 
@@ -183,11 +184,11 @@ async function getContributionsAnalytics(
 
     // Statuts
     const byStatus = {
-      confirmed: contributions.filter((c: any) => c.payment?.status === 'confirmed')
+      confirmed: contributions.filter((c: any) => c.payment?.processorStatus === 'succeeded' || c.status === 'confirmed')
         .length,
-      pending: contributions.filter((c: any) => c.payment?.status === 'pending').length,
-      failed: contributions.filter((c: any) => c.payment?.status === 'failed').length,
-      refunded: contributions.filter((c: any) => c.payment?.status === 'refunded').length,
+      pending: contributions.filter((c: any) => c.payment?.processorStatus === 'requires_payment_method' || c.status === 'pending').length,
+      failed: contributions.filter((c: any) => c.payment?.processorStatus === 'failed' || c.status === 'failed').length,
+      refunded: contributions.filter((c: any) => c.payment?.processorStatus === 'canceled' || c.status === 'refunded').length,
     };
 
     // Dates

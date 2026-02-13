@@ -147,16 +147,16 @@ async function collectUserData(startDate: Date, endDate: Date): Promise<MonthlyR
     ]);
 
     // Compter par type d'utilisateur (nouveaux)
-    const byType = newUsers.reduce((counts, user) => {
+    const byType = newUsers.data.reduce((counts, user) => {
       counts[user.userType]++;
       return counts;
     }, { creators: 0, contributors: 0, auditors: 0 });
 
     return {
-      totalRegistered: totalUsers.length,
-      newRegistrations: newUsers.length,
-      activeUsers: activeUsers.length,
-      kycCompletions: kycCompletions.length,
+      totalRegistered: totalUsers.data.length,
+      newRegistrations: newUsers.data.length,
+      activeUsers: activeUsers.data.length,
+      kycCompletions: kycCompletions.data.length,
       byType
     };
 
@@ -204,8 +204,8 @@ async function collectProjectData(startDate: Date, endDate: Date): Promise<Month
     ]);
 
     // Calculer les métriques financières
-    const totalFunding = allActiveProjects.reduce((sum, project) => sum + project.currentFunding, 0);
-    const averageFunding = allActiveProjects.length > 0 ? totalFunding / allActiveProjects.length : 0;
+    const totalFunding = allActiveProjects.data.reduce((sum, project) => sum + project.currentFunding, 0);
+    const averageFunding = allActiveProjects.data.length > 0 ? totalFunding / allActiveProjects.data.length : 0;
 
     // Analyser par catégorie
     const categoryAnalysis = new Map<string, {
@@ -214,7 +214,7 @@ async function collectProjectData(startDate: Date, endDate: Date): Promise<Month
       completed: number;
     }>();
 
-    allActiveProjects.forEach(project => {
+    allActiveProjects.data.forEach(project => {
       if (!categoryAnalysis.has(project.category)) {
         categoryAnalysis.set(project.category, { projects: [], funding: 0, completed: 0 });
       }
@@ -223,7 +223,7 @@ async function collectProjectData(startDate: Date, endDate: Date): Promise<Month
       category.funding += project.currentFunding;
     });
 
-    completedProjects.forEach(project => {
+    completedProjects.data.forEach(project => {
       if (categoryAnalysis.has(project.category)) {
         categoryAnalysis.get(project.category)!.completed++;
       }
@@ -242,7 +242,7 @@ async function collectProjectData(startDate: Date, endDate: Date): Promise<Month
     );
 
     // Identifier les projets les plus performants du mois
-    const topPerforming = newProjects
+    const topPerforming = newProjects.data
       .filter(project => project.currentFunding > 0)
       .sort((a, b) => b.currentFunding - a.currentFunding)
       .slice(0, 10)
@@ -256,10 +256,10 @@ async function collectProjectData(startDate: Date, endDate: Date): Promise<Month
       }));
 
     return {
-      totalActive: allActiveProjects.length,
-      newProjects: newProjects.length,
-      completedProjects: completedProjects.length,
-      cancelledProjects: cancelledProjects.length,
+      totalActive: allActiveProjects.data.length,
+      newProjects: newProjects.data.length,
+      completedProjects: completedProjects.data.length,
+      cancelledProjects: cancelledProjects.data.length,
       totalFunding,
       averageFunding,
       byCategory,
@@ -298,17 +298,17 @@ async function collectContributionData(startDate: Date, endDate: Date): Promise<
       ]
     );
 
-    const totalCount = monthContributions.length;
-    const totalAmount = monthContributions.reduce((sum, contrib) => sum + contrib.amount, 0);
+    const totalCount = monthContributions.data.length;
+    const totalAmount = monthContributions.data.reduce((sum, contrib) => sum + contrib.amount, 0);
     const averageAmount = totalCount > 0 ? totalAmount / totalCount : 0;
-    const uniqueContributors = new Set(monthContributions.map(contrib => contrib.contributorUid)).size;
+    const uniqueContributors = new Set(monthContributions.data.map(contrib => contrib.contributorUid)).size;
 
     // Calculer la moyenne quotidienne
     const daysInMonth = Math.ceil((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000));
     const dailyAverage = totalAmount / daysInMonth;
 
     // Calculer le taux de croissance
-    const previousAmount = previousMonthContributions.reduce((sum, contrib) => sum + contrib.amount, 0);
+    const previousAmount = previousMonthContributions.data.reduce((sum, contrib) => sum + contrib.amount, 0);
     const growthRate = previousAmount > 0 ? ((totalAmount - previousAmount) / previousAmount) * 100 : 0;
 
     // Analyser les gammes de contribution
@@ -319,7 +319,7 @@ async function collectContributionData(startDate: Date, endDate: Date): Promise<
       'major': 0      // €500+
     };
 
-    monthContributions.forEach(contrib => {
+    monthContributions.data.forEach(contrib => {
       const amountEur = contrib.amount / 100;
       if (amountEur <= 50) ranges.small++;
       else if (amountEur <= 200) ranges.medium++;
@@ -375,9 +375,9 @@ async function collectFinancialData(startDate: Date, endDate: Date): Promise<Mon
     ]);
 
     const totalVolume = monthlyStats?.contributions?.totalAmount || 0;
-    const escrowHeld = escrowRecords.reduce((sum, record) => sum + record.amount + (record.accruedInterest || 0), 0);
-    const interestAccrued = interestCalculations.reduce((sum, calc) => sum + calc.interestEarned, 0);
-    const refundAmount = refunds.reduce((sum, refund) => sum + refund.refundAmount, 0);
+    const escrowHeld = escrowRecords.data.reduce((sum, record) => sum + record.amount + (record.accruedInterest || 0), 0);
+    const interestAccrued = interestCalculations.data.reduce((sum, calc) => sum + calc.interestEarned, 0);
+    const refundAmount = refunds.data.reduce((sum, refund) => sum + refund.refundAmount, 0);
     
     // Calculer les frais de plateforme (estimation basée sur les contributions)
     const platformFees = Math.round(totalVolume * REPORTS_CONFIG.PLATFORM_FEE_RATE);
@@ -387,7 +387,7 @@ async function collectFinancialData(startDate: Date, endDate: Date): Promise<Mon
       totalVolume,
       escrowHeld,
       interestAccrued,
-      refundsProcessed: refunds.length,
+      refundsProcessed: refunds.data.length,
       refundAmount,
       platformFees,
       netRevenue
@@ -424,23 +424,23 @@ async function collectAuditData(startDate: Date, endDate: Date): Promise<Monthly
       ]
     );
 
-    const totalCompleted = completedAudits.length;
-    const averageScore = totalCompleted > 0 ? 
-      completedAudits.reduce((sum, audit) => sum + audit.score, 0) / totalCompleted : 0;
+    const totalCompleted = completedAudits.data.length;
+    const averageScore = totalCompleted > 0 ?
+      completedAudits.data.reduce((sum, audit) => sum + audit.score, 0) / totalCompleted : 0;
 
     const averageCompensation = totalCompleted > 0 ?
-      completedAudits.reduce((sum, audit) => sum + audit.compensation, 0) / totalCompleted : 0;
+      completedAudits.data.reduce((sum, audit) => sum + audit.compensation, 0) / totalCompleted : 0;
 
     // Calculer le temps moyen de completion
-    const completionTimes = completedAudits
+    const completionTimes = completedAudits.data
       .filter(audit => audit.startedAt && audit.completedAt)
       .map(audit => Math.floor((audit.completedAt.getTime() - audit.startedAt.getTime()) / (24 * 60 * 60 * 1000)));
-    
+
     const averageCompletionTime = completionTimes.length > 0 ?
       completionTimes.reduce((sum, time) => sum + time, 0) / completionTimes.length : 0;
 
     // Analyser par complexité
-    const byComplexity = completedAudits.reduce((counts, audit) => {
+    const byComplexity = completedAudits.data.reduce((counts, audit) => {
       const complexity = audit.complexity || 'standard';
       counts[complexity] = (counts[complexity] || 0) + 1;
       return counts;
@@ -449,7 +449,7 @@ async function collectAuditData(startDate: Date, endDate: Date): Promise<Monthly
     return {
       totalCompleted,
       averageScore,
-      auditorsActive: activeAuditors.length,
+      auditorsActive: activeAuditors.data.length,
       averageCompensation,
       completionTime: averageCompletionTime,
       byComplexity
@@ -490,10 +490,10 @@ async function collectPerformanceData(startDate: Date, endDate: Date): Promise<M
 
     const apiResponseTime = performanceStats?.averageResponseTime || 0;
     const totalRequests = performanceStats?.totalRequests || 1;
-    const errorRate = (errorLogs.length / totalRequests) * 100;
-    
+    const errorRate = (errorLogs.data.length / totalRequests) * 100;
+
     // Calculer l'uptime basé sur les erreurs critiques
-    const criticalErrors = errorLogs.filter(log => log.severity === 'critical').length;
+    const criticalErrors = errorLogs.data.filter(log => log.severity === 'critical').length;
     const uptime = Math.max(0, 100 - (criticalErrors / Math.max(totalRequests / 100, 1)));
 
     return {
@@ -501,7 +501,7 @@ async function collectPerformanceData(startDate: Date, endDate: Date): Promise<M
       errorRate,
       uptime,
       dataProcessed: performanceStats?.dataProcessed || 0,
-      functionsExecuted: functionExecutions.length
+      functionsExecuted: functionExecutions.data.length
     };
 
   } catch (error) {
@@ -525,22 +525,22 @@ async function collectImpactData(startDate: Date, endDate: Date): Promise<Monthl
     );
 
     // Calculer les métriques d'impact agrégées
-    const projectsImpacted = impactfulProjects.length;
-    const beneficiariesReached = impactfulProjects.reduce(
-      (sum, project) => sum + (project.impactMetrics?.beneficiariesReached || 0), 
+    const projectsImpacted = impactfulProjects.data.length;
+    const beneficiariesReached = impactfulProjects.data.reduce(
+      (sum, project) => sum + (project.impactMetrics?.beneficiariesReached || 0),
       0
     );
 
     // Calculer un score d'impact global
-    const impactScores = impactfulProjects
+    const impactScores = impactfulProjects.data
       .map(project => project.impactMetrics?.impactScore || 0)
       .filter(score => score > 0);
-    
+
     const impactScore = impactScores.length > 0 ?
       impactScores.reduce((sum, score) => sum + score, 0) / impactScores.length : 0;
 
     // Métriques de durabilité par catégorie
-    const sustainabilityMetrics = impactfulProjects.reduce((metrics, project) => {
+    const sustainabilityMetrics = impactfulProjects.data.reduce((metrics, project) => {
       const category = project.category;
       if (!metrics[category]) {
         metrics[category] = 0;
@@ -551,7 +551,7 @@ async function collectImpactData(startDate: Date, endDate: Date): Promise<Monthl
 
     // Moyenne par catégorie
     Object.keys(sustainabilityMetrics).forEach(category => {
-      const categoryProjects = impactfulProjects.filter(p => p.category === category);
+      const categoryProjects = impactfulProjects.data.filter(p => p.category === category);
       sustainabilityMetrics[category] = categoryProjects.length > 0 ?
         sustainabilityMetrics[category] / categoryProjects.length : 0;
     });
@@ -729,7 +729,7 @@ async function sendMonthlyReportEmail(reportData: MonthlyReportData): Promise<{
     };
 
     // Envoyer aux administrateurs
-    const adminPromises = admins.map(async (admin) => {
+    const adminPromises = admins.data.map(async (admin) => {
       try {
         await emailService.sendEmail({
           to: admin.email,
@@ -748,7 +748,7 @@ async function sendMonthlyReportEmail(reportData: MonthlyReportData): Promise<{
     });
 
     // Envoyer aux stakeholders
-    const stakeholderPromises = stakeholders.map(async (stakeholder) => {
+    const stakeholderPromises = stakeholders.data.map(async (stakeholder) => {
       try {
         await emailService.sendEmail({
           to: stakeholder.email,
@@ -767,7 +767,7 @@ async function sendMonthlyReportEmail(reportData: MonthlyReportData): Promise<{
     });
 
     // Envoyer aux investisseurs (version financière détaillée)
-    const investorPromises = investors.map(async (investor) => {
+    const investorPromises = investors.data.map(async (investor) => {
       try {
         await emailService.sendEmail({
           to: investor.email,

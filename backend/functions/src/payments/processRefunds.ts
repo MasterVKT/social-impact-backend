@@ -133,8 +133,8 @@ async function getEligibleContributions(
         `projects/${projectId}/contributions`,
         [['status', '==', 'confirmed']]
       );
-      
-      return contributions;
+
+      return contributions.data;
     }
 
     throw new https.HttpsError('invalid-argument', 'Invalid refund configuration');
@@ -427,11 +427,11 @@ async function processSingleRefund(
       { limit: 1 }
     );
 
-    if (contributionDoc.length === 0) {
+    if (contributionDoc.data.length === 0) {
       throw new https.HttpsError('not-found', 'Eligible contribution not found');
     }
 
-    const contribution = contributionDoc[0];
+    const contribution = contributionDoc.data[0];
     const project = await firestoreHelper.getDocument<ProjectDocument>('projects', contribution.projectId);
 
     // Calculer le montant de remboursement
@@ -475,10 +475,12 @@ async function processProjectRefunds(
 ): Promise<any[]> {
   try {
     // Récupérer toutes les contributions confirmées du projet
-    const contributions = await firestoreHelper.queryDocuments<ContributionDocument>(
+    const contributionsResult = await firestoreHelper.queryDocuments<ContributionDocument>(
       `projects/${projectId}/contributions`,
       [['status', '==', 'confirmed']]
     );
+
+    const contributions = contributionsResult.data;
 
     if (contributions.length === 0) {
       logger.info('No confirmed contributions to refund', { projectId, refundType });

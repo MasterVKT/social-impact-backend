@@ -217,6 +217,33 @@
       ]
     },
 
+    // Index pour projets par creatorId (Impact Screen)
+    // CRITIQUE: Requis pour Impact Screen - Query: projects.where('creatorId', '==', X).orderBy('createdAt', 'desc')
+    {
+      "collectionGroup": "projects",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "creatorId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+
+    // ============================================
+    // COLLECTION: activities
+    // ============================================
+
+    // Index pour activités par userId (Dashboard + Activities Screen)
+    // CRITIQUE: Requis pour Dashboard Recent Activities et Activities Screen
+    // Query: activities.where('userId', '==', X).orderBy('timestamp', 'desc')
+    {
+      "collectionGroup": "activities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+
     // ============================================
     // SUB-COLLECTION: milestones
     // ============================================

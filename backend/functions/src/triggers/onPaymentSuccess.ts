@@ -4,6 +4,7 @@
  */
 
 import { firestore } from 'firebase-functions';
+import { Timestamp } from 'firebase-admin/firestore';
 import { logger } from '../utils/logger';
 import { firestoreHelper } from '../utils/firestore';
 import { emailService } from '../integrations/sendgrid/emailService';
@@ -53,29 +54,30 @@ async function validateAndEnrichPayment(
     }
 
     // Calculer les frais et montants
-    const platformFeeRate = PAYMENT_CONFIG.PLATFORM_FEE_RATE; // Ex: 0.05 pour 5%
-    const platformFee = Math.round(paymentData.amount * platformFeeRate);
-    const netAmount = paymentData.amount - platformFee;
+    const platformFeeRate = PAYMENT_CONFIG.PLATFORM_FEE_PERCENTAGE / 100; // Ex: 0.05 pour 5%
+    const grossAmount = paymentData.amount?.gross || 0;
+    const platformFee = Math.round(grossAmount * platformFeeRate);
+    const netAmount = grossAmount - platformFee;
     const escrowAmount = netAmount;
 
     const processedDetails: ProcessedPaymentDetails = {
       paymentId: paymentData.id,
       contributorUid: paymentData.contributorUid,
       projectId: paymentData.projectId,
-      amount: paymentData.amount,
-      currency: paymentData.currency,
-      paymentMethod: paymentData.paymentMethod,
-      stripePaymentIntentId: paymentData.stripePaymentIntentId,
+      amount: grossAmount,
+      currency: paymentData.amount?.currency || 'EUR',
+      paymentMethod: paymentData.payment?.paymentMethodId || 'unknown',
+      stripePaymentIntentId: paymentData.payment?.paymentIntentId,
       escrowAmount,
       platformFee,
       netAmount,
-      contributionType: paymentData.metadata?.contributionType || 'one_time',
-      metadata: paymentData.metadata || {}
+      contributionType: 'one_time',
+      metadata: {}
     };
 
     logger.info('Payment details validated and enriched', {
       paymentId: paymentData.id,
-      amount: paymentData.amount,
+      amount: grossAmount,
       platformFee,
       netAmount,
       projectTitle: project.title,
@@ -131,8 +133,8 @@ async function updateProjectFunding(
         fundingStatus,
         contributors,
         contributorCount: contributors.length,
-        lastContributionAt: new Date(),
-        updatedAt: new Date()
+        lastContributionAt: Timestamp.now(),
+        updatedAt: Timestamp.now()
       });
 
       // Créer l'enregistrement de contribution
@@ -156,8 +158,8 @@ async function updateProjectFunding(
         escrowStatus: 'held',
         escrowAmount: paymentDetails.escrowAmount,
         metadata: paymentDetails.metadata,
-        createdAt: new Date(),
-        confirmedAt: new Date()
+        createdAt: Timestamp.now(),
+        confirmedAt: Timestamp.now()
       });
     });
 
@@ -216,11 +218,12 @@ async function sendPaymentConfirmationNotifications(
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    } as NotificationDocument);
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as NotificationDocument);
 
     // Notification au créateur
     const creatorNotificationId = helpers.string.generateId('notif');
@@ -249,23 +252,24 @@ async function sendPaymentConfirmationNotifications(
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    } as NotificationDocument);
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as NotificationDocument);
 
     // Mettre à jour les compteurs de notifications
     await Promise.all([
       firestoreHelper.updateDocument('users', paymentDetails.contributorUid, {
         'notificationCounters.unread': firestoreHelper.increment(1),
         'notificationCounters.total': firestoreHelper.increment(1),
-        'notificationCounters.lastNotificationAt': new Date()
+        'notificationCounters.lastNotificationAt': Timestamp.now()
       }),
       firestoreHelper.updateDocument('users', project.creatorUid, {
         'notificationCounters.unread': firestoreHelper.increment(1),
         'notificationCounters.total': firestoreHelper.increment(1),
-        'notificationCounters.lastNotificationAt': new Date()
+        'notificationCounters.lastNotificationAt': Timestamp.now()
       })
     ]);
 
@@ -400,7 +404,7 @@ async function updatePaymentStatistics(
       'stats.totalContributed': paymentDetails.amount,
       'stats.contributionsCount': 1,
       'stats.projectsSupported': paymentDetails.contributionType === 'one_time' ? 1 : 0,
-      'stats.lastContribution': new Date(),
+      'stats.lastContribution': Timestamp.now(),
       [`stats.contributionsByCategory.${project.category}`]: paymentDetails.amount
     });
 
@@ -408,7 +412,7 @@ async function updatePaymentStatistics(
     await firestoreHelper.incrementDocument('users', project.creatorUid, {
       'stats.totalFundingReceived': paymentDetails.netAmount,
       'stats.contributorsCount': 1,
-      'stats.lastContributionReceived': new Date()
+      'stats.lastContributionReceived': Timestamp.now()
     });
 
     logger.info('Payment statistics updated', {
@@ -434,12 +438,15 @@ async function processContributorRewards(
   paymentDetails: ProcessedPaymentDetails
 ): Promise<void> {
   try {
-    const contributor = await firestoreHelper.getDocument<UserDocument>('users', paymentDetails.contributorUid);
-    
+    const [contributor, project] = await Promise.all([
+      firestoreHelper.getDocument<UserDocument>('users', paymentDetails.contributorUid),
+      firestoreHelper.getDocument<ProjectDocument>('projects', paymentDetails.projectId)
+    ]);
+
     // Calculer le nombre total de contributions du contributeur
     const contributorStats = contributor.stats || {};
-    const totalContributions = (contributorStats.contributionsCount || 0) + 1;
-    const totalContributed = (contributorStats.totalContributed || 0) + paymentDetails.amount;
+    const totalContributions = ((contributorStats as any).contributionsCount || 0) + 1;
+    const totalContributed = ((contributorStats as any).totalContributed || 0) + paymentDetails.amount;
 
     const rewardsToProcess = [];
 
@@ -509,8 +516,8 @@ async function processContributorRewards(
           value: reward.value,
           rarity: reward.rarity,
           status: 'earned',
-          earnedAt: new Date(),
-          createdAt: new Date()
+          earnedAt: Timestamp.now(),
+          createdAt: Timestamp.now()
         });
 
         // Notifier le contributeur de la récompense
@@ -537,11 +544,12 @@ async function processContributorRewards(
             read: false,
             readAt: null,
             delivered: true,
-            deliveredAt: new Date(),
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            version: 1
-          });
+            deliveredAt: Timestamp.now(),
+            createdAt: Timestamp.now(),
+            updatedAt: Timestamp.now(),
+            version: 1,
+            autoDelete: false
+          } as unknown as NotificationDocument);
 
           await firestoreHelper.updateDocument('users', paymentDetails.contributorUid, {
             'notificationCounters.unread': firestoreHelper.increment(1),
@@ -601,15 +609,15 @@ async function updateEscrowRecords(
       ],
       estimatedReleaseDate: calculateEstimatedReleaseDate(paymentDetails.projectId),
       stripePaymentIntentId: paymentDetails.stripePaymentIntentId,
-      createdAt: new Date(),
-      lastUpdated: new Date()
+      createdAt: Timestamp.now(),
+      lastUpdated: Timestamp.now()
     });
 
     // Mettre à jour les totaux d'escrow du projet
     await firestoreHelper.updateDocument('projects', paymentDetails.projectId, {
       'escrow.totalHeld': firestoreHelper.increment(paymentDetails.escrowAmount),
       'escrow.recordCount': firestoreHelper.increment(1),
-      'escrow.lastUpdated': new Date()
+      'escrow.lastUpdated': Timestamp.now()
     });
 
     // Mettre à jour les statistiques d'escrow globales
@@ -641,12 +649,12 @@ async function updateEscrowRecords(
 async function calculateEstimatedReleaseDate(projectId: string): Promise<Date> {
   try {
     const project = await firestoreHelper.getDocument<ProjectDocument>('projects', projectId);
-    
+
     // Base: deadline du projet + délai d'audit + marge de sécurité
     let releaseDate = new Date();
-    
+
     if (project.deadline) {
-      releaseDate = new Date(project.deadline);
+      releaseDate = project.deadline.toDate();
     } else {
       // Si pas de deadline, estimer basé sur la taille du projet
       const estimatedDuration = project.fundingGoal > 100000 ? 90 : 60; // jours
@@ -689,12 +697,12 @@ async function handleRecurringContribution(
       status: 'active',
       stripeSubscriptionId: paymentDetails.metadata.stripeSubscriptionId,
       lastPaymentId: paymentDetails.paymentId,
-      lastPaymentAt: new Date(),
+      lastPaymentAt: Timestamp.now(),
       nextPaymentAt: calculateNextPaymentDate(paymentDetails.metadata.frequency || 'monthly'),
       totalPayments: 1,
       totalAmount: paymentDetails.amount,
-      createdAt: new Date(),
-      updatedAt: new Date()
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now()
     });
 
     logger.info('Recurring contribution handled', {
@@ -754,7 +762,7 @@ async function checkFundingThresholds(
       // Projet entièrement financé
       await firestoreHelper.updateDocument('projects', paymentDetails.projectId, {
         fundingStatus: 'fully_funded',
-        fullyFundedAt: new Date(),
+        fullyFundedAt: Timestamp.now(),
         acceptingContributions: false
       });
 
@@ -848,11 +856,12 @@ async function notifyNearingGoal(project: ProjectDocument, threshold: number): P
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    });
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as NotificationDocument);
 
     await firestoreHelper.updateDocument('users', project.creatorUid, {
       'notificationCounters.unread': firestoreHelper.increment(1),
@@ -951,7 +960,7 @@ export const onPaymentSuccess = firestore
         paymentId,
         amount: paymentDetails.amount,
         projectId: paymentDetails.projectId,
-        processingTime: Date.now() - new Date(afterData.updatedAt).getTime()
+        processingTime: Date.now() - afterData.updatedAt.toMillis()
       });
 
     } catch (error) {
@@ -968,10 +977,10 @@ export const onPaymentSuccess = firestore
           processingStatus: 'failed',
           processingError: {
             message: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date(),
+            timestamp: Timestamp.now(),
             retryCount: 0
           },
-          updatedAt: new Date()
+          updatedAt: Timestamp.now()
         });
       } catch (updateError) {
         logger.error('Failed to mark payment processing as failed', updateError, { paymentId });

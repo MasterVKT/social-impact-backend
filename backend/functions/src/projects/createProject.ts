@@ -14,7 +14,7 @@ import { authHelper } from '../utils/auth';
 import { ProjectsAPI } from '../types/api';
 import { ProjectDocument, UserDocument } from '../types/firestore';
 import { helpers } from '../utils/helpers';
-import { STATUS, PROJECT_CONFIG, USER_PERMISSIONS } from '../utils/constants';
+import { STATUS, LIMITS, USER_PERMISSIONS } from '../utils/constants';
 
 /**
  * Schéma de validation pour la requête
@@ -42,10 +42,10 @@ const requestSchema = Joi.object({
 
   // Financement
   funding: Joi.object({
-    goal: Joi.number().min(PROJECT_CONFIG.MIN_FUNDING_GOAL).max(PROJECT_CONFIG.MAX_FUNDING_GOAL).required(),
+    goal: Joi.number().min(LIMITS.PROJECT.MIN_FUNDING_GOAL).max(LIMITS.PROJECT.MAX_FUNDING_GOAL).required(),
     currency: commonSchemas.currency.required(),
-    deadline: Joi.date().min('now').max(helpers.date.addMonths(new Date(), PROJECT_CONFIG.MAX_DURATION_MONTHS)).required(),
-    minContribution: Joi.number().min(PROJECT_CONFIG.MIN_CONTRIBUTION).max(1000000).optional(),
+    deadline: Joi.date().min('now').max(helpers.date.addDays(new Date(), LIMITS.PROJECT.MAX_DURATION_DAYS)).required(),
+    minContribution: Joi.number().min(LIMITS.CONTRIBUTION.MIN_AMOUNT).max(1000000).optional(),
   }).required(),
 
   // Milestones
@@ -76,7 +76,7 @@ const requestSchema = Joi.object({
 
   // Localisation
   location: Joi.object({
-    country: commonSchemas.countryCode.required(),
+    country: commonSchemas.country.required(),
     region: Joi.string().max(50).optional(),
     city: Joi.string().max(50).optional(),
     coordinates: Joi.object({
@@ -272,29 +272,39 @@ async function createProjectDocument(
   const estimatedPlatformFees = Math.round(data.funding.goal * platformFeeRate);
   const netGoal = data.funding.goal - estimatedPlatformFees;
 
-  const projectDocument: Omit<ProjectDocument, 'id'> = {
+  const projectDocument: any = {
     // Identité et métadonnées
+    id: projectId,
     uid: projectId,
     slug,
     title: data.title.trim(),
-    description: data.description.trim(),
+    fullDescription: data.description.trim(),
     shortDescription: data.shortDescription.trim(),
     category: data.category,
     tags: data.tags.map(tag => tag.trim().toLowerCase()),
-    
+
     // Créateur
+    creator: {
+      uid: creator.uid,
+      displayName: creator.displayName,
+      profilePicture: creator.profilePicture,
+      bio: creator.bio,
+      stats: {
+        projectsCreated: creator.stats?.projectsCreated || 0,
+        successRate: 0,
+        averageRating: 0,
+      }
+    },
     creatorUid: creator.uid,
     creatorDisplayName: creator.displayName,
     creatorAvatar: creator.profilePicture,
-    
+
     // Status et dates
     status: STATUS.PROJECT.DRAFT,
-    visibility: data.settings?.visibility || 'public',
+    visibility: (data.settings?.visibility || 'public') as 'public' | 'private' | 'draft',
     publishedAt: undefined,
-    fundingStartsAt: undefined,
-    fundingEndsAt: fundingDeadline,
-    completedAt: undefined,
-    
+    deadline: fundingDeadline,
+
     // Financement
     funding: {
       goal: data.funding.goal,
@@ -302,66 +312,116 @@ async function createProjectDocument(
       currency: data.funding.currency,
       contributorsCount: 0,
       percentage: 0,
-      deadline: fundingDeadline,
-      minContribution: data.funding.minContribution || PROJECT_CONFIG.MIN_CONTRIBUTION,
-      platformFees: {
-        estimated: estimatedPlatformFees,
-        actual: 0,
-        rate: platformFeeRate,
+      averageContribution: 0,
+      fees: {
+        platformPercentage: platformFeeRate,
+        auditPercentage: 0,
+        platformAmount: estimatedPlatformFees,
+        auditAmount: 0,
       },
-      stripeFees: {
-        estimated: 0,
-        actual: 0,
-      },
-      netGoal,
-      netRaised: 0,
+      minimumContribution: data.funding.minContribution || PROJECT_CONFIG.MIN_CONTRIBUTION,
+      maximumContribution: undefined,
     },
+    fundingGoal: data.funding.goal,
+    currentFunding: 0,
 
     // Impact et objectifs
     impactGoals: {
       primary: data.impactGoals.primary.trim(),
       secondary: data.impactGoals.secondary?.map(goal => goal.trim()) || [],
-      metrics: data.impactGoals.metrics.map(metric => ({
-        id: helpers.string.generateId('metric'),
-        name: metric.name.trim(),
-        target: metric.target,
-        unit: metric.unit.trim(),
-        description: metric.description?.trim(),
-        current: 0,
-        percentage: 0,
-        lastUpdatedAt: undefined,
-      })),
     },
 
-    // Milestones
+    // Timeline
+    timeline: {
+      createdAt: now,
+      submittedAt: undefined,
+      approvedAt: undefined,
+      publishedAt: undefined,
+      startDate: undefined,
+      endDate: fundingDeadline,
+      completedAt: undefined,
+      campaignDuration: estimatedDuration as 30 | 60 | 90,
+      daysRemaining: estimatedDuration,
+    },
+
+    // Milestones (legacy)
     milestones: milestonesWithIds,
-    currentMilestoneIndex: 0,
-    
+    currentMilestone: 0,
+
     // Équipe
     team: data.team.map((member, index) => ({
-      id: helpers.string.generateId('team'),
+      uid: helpers.string.generateId('team'),
       name: member.name.trim(),
       role: member.role.trim(),
-      bio: member.bio?.trim(),
-      avatar: member.avatar,
-      linkedin: member.linkedin,
-      isLead: index === 0, // Premier membre = lead
-      joinedAt: now,
     })),
 
     // Médias
     media: {
-      coverImage: data.media.coverImage,
-      gallery: data.media.gallery || [],
-      video: data.media.video,
+      coverImage: {
+        url: data.media.coverImage,
+        thumbnails: {
+          small: data.media.coverImage,
+          medium: data.media.coverImage,
+          large: data.media.coverImage,
+        },
+        alt: data.title,
+      },
+      additionalImages: (data.media.gallery || []).map((url, index) => ({
+        url,
+        thumbnails: { small: url, medium: url, large: url },
+        caption: undefined,
+        order: index,
+      })),
+      video: data.media.video ? {
+        url: data.media.video,
+        thumbnail: data.media.coverImage,
+        duration: undefined,
+        type: 'direct' as const,
+      } : undefined,
       documents: data.media.documents?.map(doc => ({
-        id: helpers.string.generateId('doc'),
         name: doc.name.trim(),
+        type: 'other' as const,
         url: doc.url,
-        type: doc.type,
-        size: doc.size,
+        size: doc.size || 0,
         uploadedAt: now,
+        downloadable: true,
       })) || [],
+    },
+
+    // Impact metrics
+    impact: {
+      beneficiariesCount: 0,
+      targetAudience: '',
+      sdgGoals: [],
+      measurementMethod: '',
+      expectedOutcomes: [],
+      actualBeneficiaries: undefined,
+      actualOutcomes: undefined,
+      impactScore: undefined,
+    },
+
+    // Moderation
+    moderation: {
+      status: 'pending' as const,
+      reviewedBy: undefined,
+      reviewedAt: undefined,
+      rejectionReason: undefined,
+      aiScore: 0,
+      aiFlags: [],
+      manualFlags: [],
+    },
+
+    // Analytics
+    analytics: {
+      views: 0,
+      totalViews: 0,
+      saves: 0,
+      shares: 0,
+      conversionRate: 0,
+      averageTimeSpent: 0,
+      bounceRate: 0,
+      trafficSources: {},
+      lastViewedAt: now,
     },
 
     // Localisation
@@ -374,10 +434,11 @@ async function createProjectDocument(
 
     // Paramètres
     settings: {
-      allowPublicComments: data.settings?.allowPublicComments ?? true,
-      requireIdentityVerification: data.settings?.requireIdentityVerification ?? false,
-      autoApproveContributions: data.settings?.autoApproveContributions ?? true,
-      notifyOnMilestone: data.settings?.notifyOnMilestone ?? true,
+      allowAnonymousContributions: true,
+      publicContributorsList: true,
+      allowComments: data.settings?.allowPublicComments ?? true,
+      emailUpdatesEnabled: true,
+      autoRefundOnFailure: true,
     },
 
     // Statistiques initiales
@@ -385,28 +446,10 @@ async function createProjectDocument(
       views: 0,
       likes: 0,
       shares: 0,
+      favorites: 0,
       comments: 0,
-      updates: 0,
-      avgRating: 0,
-      ratingCount: 0,
     },
 
-    // Audit et conformité
-    auditRequired: data.funding.goal >= PROJECT_CONFIG.AUDIT_THRESHOLD_AMOUNT,
-    auditStatus: data.funding.goal >= PROJECT_CONFIG.AUDIT_THRESHOLD_AMOUNT ? STATUS.AUDIT.PENDING : undefined,
-    complianceChecks: {
-      contentModeration: STATUS.MODERATION.PENDING,
-      legalReview: data.funding.goal >= PROJECT_CONFIG.LEGAL_REVIEW_THRESHOLD ? STATUS.MODERATION.PENDING : STATUS.MODERATION.APPROVED,
-      financialReview: STATUS.MODERATION.PENDING,
-    },
-
-    // Métadonnées système
-    estimatedDuration,
-    riskLevel: calculateProjectRiskLevel(data),
-    lastModifiedBy: creator.uid,
-    ipAddress: undefined, // Sera ajouté par le contexte
-    userAgent: undefined, // Sera ajouté par le contexte
-    
     // Champs BaseDocument
     createdAt: now,
     updatedAt: now,
@@ -495,7 +538,7 @@ async function notifyProjectCreation(
 
   } catch (error) {
     logger.error('Failed to send project creation notifications', error, {
-      projectId: project.uid,
+      projectId: project.uid || project.id,
       creatorUid: creator.uid
     });
     // Ne pas faire échouer la création pour les notifications
@@ -520,14 +563,10 @@ async function executeCreateProject(
   // Créer le document projet
   const projectDocument = await createProjectDocument(data, creator, context);
   
-  // Ajouter les métadonnées de contexte
-  projectDocument.ipAddress = context.rawRequest.ip;
-  projectDocument.userAgent = context.rawRequest.headers['user-agent'] as string;
-
   // Transaction pour créer le projet
   const projectId = await firestoreHelper.runTransaction(async (transaction) => {
     const projectRef = firestoreHelper.getDocumentRef('projects', projectDocument.uid);
-    
+
     // Vérifier que l'ID n'existe pas déjà
     const existingProject = await transaction.get(projectRef);
     if (existingProject.exists) {
@@ -536,7 +575,7 @@ async function executeCreateProject(
 
     // Créer le projet
     transaction.set(projectRef, projectDocument);
-    
+
     return projectDocument.uid;
   });
 
@@ -546,7 +585,7 @@ async function executeCreateProject(
   // Envoyer les notifications (en parallèle)
   await notifyProjectCreation(projectDocument, creator);
 
-  logger.business('Project created', 'projects', {
+  logger.info('Project created', {
     projectId,
     creatorUid: creator.uid,
     title: data.title,
@@ -555,50 +594,16 @@ async function executeCreateProject(
     currency: data.funding.currency,
     milestonesCount: data.milestones.length,
     teamSize: data.team.length,
-    estimatedDuration: projectDocument.estimatedDuration,
-    riskLevel: projectDocument.riskLevel,
-    auditRequired: projectDocument.auditRequired,
   });
 
   return {
     projectId,
     slug: projectDocument.slug,
     status: projectDocument.status,
-    auditRequired: projectDocument.auditRequired,
-    estimatedDuration: projectDocument.estimatedDuration,
-    riskLevel: projectDocument.riskLevel,
-    nextSteps: getNextSteps(projectDocument),
+    estimatedApprovalTime: '48-72 hours',
   };
 }
 
-/**
- * Détermine les prochaines étapes après la création
- */
-function getNextSteps(project: ProjectDocument): string[] {
-  const steps: string[] = [];
-
-  if (project.complianceChecks.contentModeration === STATUS.MODERATION.PENDING) {
-    steps.push('content_moderation_review');
-  }
-
-  if (project.complianceChecks.legalReview === STATUS.MODERATION.PENDING) {
-    steps.push('legal_review');
-  }
-
-  if (project.complianceChecks.financialReview === STATUS.MODERATION.PENDING) {
-    steps.push('financial_review');
-  }
-
-  if (project.auditRequired) {
-    steps.push('audit_assignment');
-  }
-
-  if (steps.length === 0) {
-    steps.push('ready_for_publication');
-  }
-
-  return steps;
-}
 
 /**
  * Firebase Function principale
@@ -634,8 +639,6 @@ export const createProject = https.onCall(
       uid: context.auth.uid,
       projectId: result.projectId,
       slug: result.slug,
-      auditRequired: result.auditRequired,
-      riskLevel: result.riskLevel,
       success: true,
     });
 

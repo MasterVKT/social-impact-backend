@@ -116,12 +116,21 @@ export class SecurityMonitoringSystem {
   private eventBuffer: SecurityEvent[] = [];
   private alertBuffer: SecurityAlert[] = [];
   private processInterval: NodeJS.Timeout | null = null;
+  private initialized = false;
 
   constructor() {
-    this.initializeMonitoring();
+    // Don't initialize here - use lazy initialization
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (!this.initialized) {
+      await this.initializeMonitoring();
+      this.initialized = true;
+    }
   }
 
   async logSecurityEvent(event: Omit<SecurityEvent, 'id' | 'timestamp' | 'processed' | 'alerts' | 'correlation'>): Promise<SecurityEvent> {
+    await this.ensureInitialized();
     try {
       const securityEvent: SecurityEvent = {
         id: `event_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -981,5 +990,15 @@ export async function logAuthorizationEvent(
   });
 }
 
-// Singleton instance
-export const securityMonitoringSystem = new SecurityMonitoringSystem();
+// Lazy singleton instance - only created when first accessed
+let _securityMonitoringSystem: SecurityMonitoringSystem | null = null;
+
+export function getSecurityMonitoringSystem(): SecurityMonitoringSystem {
+  if (!_securityMonitoringSystem) {
+    _securityMonitoringSystem = new SecurityMonitoringSystem();
+  }
+  return _securityMonitoringSystem;
+}
+
+// Backward compatible export - calls getter
+export const securityMonitoringSystem = getSecurityMonitoringSystem();

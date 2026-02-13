@@ -97,16 +97,16 @@ function buildFirestoreFilters(searchCriteria: ProjectsAPI.SearchProjectsRequest
   }
 
   if (searchCriteria.deadlineBefore) {
-    filters.push(['funding.deadline', '<=', searchCriteria.deadlineBefore]);
+    filters.push(['deadline', '<=', searchCriteria.deadlineBefore]);
   }
 
   // Filtres de financement
   if (searchCriteria.fundingRange?.min) {
-    filters.push(['funding.goal', '>=', searchCriteria.fundingRange.min]);
+    filters.push(['fundingGoal', '>=', searchCriteria.fundingRange.min]);
   }
 
   if (searchCriteria.fundingRange?.max) {
-    filters.push(['funding.goal', '<=', searchCriteria.fundingRange.max]);
+    filters.push(['fundingGoal', '<=', searchCriteria.fundingRange.max]);
   }
 
   return filters;
@@ -121,16 +121,16 @@ function applyTextSearch(projects: ProjectDocument[], query?: string): ProjectDo
   }
 
   const searchTerms = query.toLowerCase().trim().split(/\s+/);
-  
+
   return projects.filter(project => {
     const searchableText = [
       project.title,
-      project.description,
+      project.description || project.fullDescription || '',
       project.shortDescription,
-      ...project.tags,
-      ...project.team.map(member => member.name),
-      project.impactGoals.primary,
-      ...(project.impactGoals.secondary || [])
+      ...(project.tags || []),
+      ...(project.team || []).map(member => member.name || ''),
+      project.impactGoals?.primary || '',
+      ...(project.impactGoals?.secondary || [])
     ].join(' ').toLowerCase();
 
     return searchTerms.every(term => searchableText.includes(term));
@@ -146,10 +146,10 @@ function applyTagFilters(projects: ProjectDocument[], tags?: string[]): ProjectD
   }
 
   const normalizedTags = tags.map(tag => tag.toLowerCase().trim());
-  
+
   return projects.filter(project => {
-    return normalizedTags.every(tag => 
-      project.tags.some(projectTag => projectTag.includes(tag))
+    return normalizedTags.every(tag =>
+      (project.tags || []).some(projectTag => projectTag.toLowerCase().includes(tag))
     );
   });
 }
@@ -175,28 +175,32 @@ function sortProjects(
           return (scoreB - scoreA) * direction;
         }
         // Par défaut, trier par popularité
-        return ((b.stats.views + b.stats.likes) - (a.stats.views + a.stats.likes)) * direction;
+        const aViews = (a.stats?.views || a.analytics?.views || 0);
+        const bViews = (b.stats?.views || b.analytics?.views || 0);
+        const aLikes = (a.stats?.likes || 0);
+        const bLikes = (b.stats?.likes || 0);
+        return ((bViews + bLikes) - (aViews + aLikes)) * direction;
 
       case 'funding_progress':
-        return (b.funding.percentage - a.funding.percentage) * direction;
+        return ((b.funding?.percentage || 0) - (a.funding?.percentage || 0)) * direction;
 
       case 'funding_goal':
-        return (b.funding.goal - a.funding.goal) * direction;
+        return ((b.funding?.goal || b.fundingGoal || 0) - (a.funding?.goal || a.fundingGoal || 0)) * direction;
 
       case 'recent':
-        const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
-        const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+        const dateA = a.publishedAt ? (typeof a.publishedAt === 'object' && 'toMillis' in a.publishedAt ? a.publishedAt.toMillis() : new Date(a.publishedAt).getTime()) : 0;
+        const dateB = b.publishedAt ? (typeof b.publishedAt === 'object' && 'toMillis' in b.publishedAt ? b.publishedAt.toMillis() : new Date(b.publishedAt).getTime()) : 0;
         return (dateB - dateA) * direction;
 
       case 'deadline':
-        const deadlineA = new Date(a.funding.deadline).getTime();
-        const deadlineB = new Date(b.funding.deadline).getTime();
+        const deadlineA = a.deadline ? (typeof a.deadline === 'object' && 'toMillis' in a.deadline ? a.deadline.toMillis() : new Date(a.deadline).getTime()) : 0;
+        const deadlineB = b.deadline ? (typeof b.deadline === 'object' && 'toMillis' in b.deadline ? b.deadline.toMillis() : new Date(b.deadline).getTime()) : 0;
         return (deadlineA - deadlineB) * direction;
 
       case 'popularity':
-        const popularityA = a.stats.views + a.stats.likes * 2 + a.stats.shares * 3;
-        const popularityB = b.stats.views + b.stats.likes * 2 + b.stats.shares * 3;
-        return (popularityB - popularityA) * direction;
+        const popA = (a.stats?.views || a.analytics?.views || 0) + (a.stats?.likes || 0) * 2 + (a.stats?.shares || a.analytics?.shares || 0) * 3;
+        const popB = (b.stats?.views || b.analytics?.views || 0) + (b.stats?.likes || 0) * 2 + (b.stats?.shares || b.analytics?.shares || 0) * 3;
+        return (popB - popA) * direction;
 
       default:
         return 0;
@@ -218,22 +222,22 @@ function calculateRelevanceScore(project: ProjectDocument, query: string): numbe
     }
 
     // Tags (poids 2)
-    if (project.tags.some(tag => tag.includes(term))) {
+    if ((project.tags || []).some(tag => tag.toLowerCase().includes(term))) {
       score += 2;
     }
 
     // Description courte (poids 2)
-    if (project.shortDescription.toLowerCase().includes(term)) {
+    if (project.shortDescription?.toLowerCase().includes(term)) {
       score += 2;
     }
 
     // Description complète (poids 1)
-    if (project.description.toLowerCase().includes(term)) {
+    if ((project.description || project.fullDescription || '').toLowerCase().includes(term)) {
       score += 1;
     }
 
     // Objectifs d'impact (poids 1)
-    if (project.impactGoals.primary.toLowerCase().includes(term)) {
+    if (project.impactGoals?.primary?.toLowerCase().includes(term)) {
       score += 1;
     }
   });
@@ -281,9 +285,9 @@ async function enrichWithCreatorInfo(
 
   try {
     // Récupérer les infos des créateurs uniques
-    const creatorUids = [...new Set(projects.map(p => p.creatorUid))];
+    const creatorUids = [...new Set(projects.map(p => p.creatorUid || p.creator?.uid).filter(Boolean))];
     const creators = await Promise.all(
-      creatorUids.map(uid => firestoreHelper.getDocumentOptional('users', uid))
+      creatorUids.map(uid => uid ? firestoreHelper.getDocumentOptional('users', uid) : null)
     );
 
     const creatorsMap = new Map();
@@ -295,21 +299,21 @@ async function enrichWithCreatorInfo(
           profilePicture: creator.profilePicture,
           bio: creator.bio,
           stats: {
-            projectsCreated: creator.stats.projectsCreated,
-            totalFundsRaised: creator.stats.totalFundsRaised,
-            successfulProjects: creator.stats.successfulProjects,
+            projectsCreated: creator.stats?.projectsCreated || 0,
+            totalFundsRaised: creator.stats?.totalFundsRaised || 0,
+            successfulProjects: creator.stats?.successfulProjects || 0,
           },
-          verified: creator.kyc.status === STATUS.KYC.APPROVED,
+          verified: creator.kyc?.status === STATUS.KYC.APPROVED,
         });
       }
     });
 
     return projects.map(project => ({
       ...project,
-      creator: creatorsMap.get(project.creatorUid) || {
-        uid: project.creatorUid,
-        displayName: project.creatorDisplayName,
-        profilePicture: project.creatorAvatar,
+      creator: creatorsMap.get(project.creatorUid || project.creator?.uid || '') || {
+        uid: project.creatorUid || project.creator?.uid || '',
+        displayName: project.creatorDisplayName || project.creator?.displayName || '',
+        profilePicture: project.creatorAvatar || project.creator?.profilePicture,
         verified: false,
       }
     }));
@@ -339,20 +343,21 @@ async function executeSearchProjects(
   if (data.sortBy === 'recent' && data.publishedSince) {
     queryOptions.orderBy = [{ field: 'publishedAt', direction: data.sortOrder }];
   } else if (data.sortBy === 'deadline') {
-    queryOptions.orderBy = [{ field: 'funding.deadline', direction: data.sortOrder }];
+    queryOptions.orderBy = [{ field: 'deadline', direction: data.sortOrder }];
   } else if (data.sortBy === 'funding_goal') {
-    queryOptions.orderBy = [{ field: 'funding.goal', direction: data.sortOrder }];
+    queryOptions.orderBy = [{ field: 'fundingGoal', direction: data.sortOrder }];
   }
 
   // Exécuter la requête Firestore
-  let projects = await firestoreHelper.queryDocuments<ProjectDocument>(
+  const projectsResult = await firestoreHelper.queryDocuments<ProjectDocument>(
     'projects',
     filters,
     queryOptions
   );
 
   // Post-processing côté client
-  
+  let projects = projectsResult.data;
+
   // Appliquer la recherche textuelle
   if (data.query) {
     projects = applyTextSearch(projects, data.query);
@@ -369,15 +374,21 @@ async function executeSearchProjects(
   // Enrichir avec les stats si demandé
   if (data.includeStats) {
     // Calculs légers uniquement pour éviter les timeouts
-    projects = projects.map(project => ({
-      ...project,
-      enrichedStats: {
-        ...project.stats,
-        daysRemaining: helpers.date.differenceInDays(new Date(project.funding.deadline), new Date()),
-        fundingVelocity: project.publishedAt ? 
-          Math.round(project.funding.raised / Math.max(helpers.date.differenceInDays(new Date(), project.publishedAt), 1)) : 0,
-      }
-    }));
+    projects = projects.map(project => {
+      const deadline = project.deadline || project.timeline?.endDate;
+      const deadlineDate = deadline ? (typeof deadline === 'object' && 'toDate' in deadline ? deadline.toDate() : new Date(deadline)) : new Date();
+      const publishedDate = project.publishedAt ? (typeof project.publishedAt === 'object' && 'toDate' in project.publishedAt ? project.publishedAt.toDate() : new Date(project.publishedAt)) : new Date();
+
+      return {
+        ...project,
+        enrichedStats: {
+          ...(project.stats || {}),
+          daysRemaining: helpers.date.differenceInDays(new Date(), deadlineDate),
+          fundingVelocity: project.publishedAt ?
+            Math.round((project.funding?.raised || 0) / Math.max(helpers.date.differenceInDays(publishedDate, new Date()), 1)) : 0,
+        }
+      };
+    });
   }
 
   // Enrichir avec les infos créateur
@@ -443,12 +454,12 @@ function calculateSearchFacets(projects: ProjectDocument[]): any {
     facets.categories[project.category] = (facets.categories[project.category] || 0) + 1;
 
     // Pays
-    if (project.location.country) {
+    if (project.location?.country) {
       facets.countries[project.location.country] = (facets.countries[project.location.country] || 0) + 1;
     }
 
     // Fourchettes de financement
-    const goal = helpers.amount.centsToEuros(project.funding.goal);
+    const goal = helpers.amount.centsToEuros(project.funding?.goal || project.fundingGoal || 0);
     if (goal < 1000) {
       facets.fundingRanges['0-1000']++;
     } else if (goal < 5000) {
@@ -462,7 +473,7 @@ function calculateSearchFacets(projects: ProjectDocument[]): any {
     }
 
     // Tags populaires
-    project.tags.forEach(tag => {
+    (project.tags || []).forEach(tag => {
       facets.tags[tag] = (facets.tags[tag] || 0) + 1;
     });
   });

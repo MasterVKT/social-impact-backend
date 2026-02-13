@@ -308,11 +308,11 @@ async function notifyAdminsOfAuditAcceptance(
       ]
     );
 
-    if (adminUsers.length === 0) {
+    if (adminUsers.data.length === 0) {
       return;
     }
 
-    const notificationPromises = adminUsers.map(admin => {
+    const notificationPromises = adminUsers.data.map(admin => {
       const emailData = {
         to: admin.email,
         templateId: 'audit_accepted_admin',
@@ -335,7 +335,7 @@ async function notifyAdminsOfAuditAcceptance(
 
     logger.info('Admins notified of audit acceptance', {
       auditId: audit.id,
-      adminsNotified: adminUsers.length,
+      adminsNotified: adminUsers.data.length,
     });
 
   } catch (error) {

@@ -15,20 +15,20 @@ import { stripeService } from '../integrations/stripe/stripeService';
 import { ContributionsAPI } from '../types/api';
 import { ProjectDocument, UserDocument, ContributionDocument } from '../types/firestore';
 import { helpers } from '../utils/helpers';
-import { STATUS, PAYMENT_CONFIG, PROJECT_CONFIG, USER_PERMISSIONS } from '../utils/constants';
+import { STATUS, PAYMENT_CONFIG, LIMITS, USER_PERMISSIONS } from '../utils/constants';
 
 /**
  * Schéma de validation pour la requête
  */
 const requestSchema = Joi.object({
   projectId: Joi.string().required(),
-  amount: Joi.number().integer().min(PAYMENT_CONFIG.MIN_CONTRIBUTION_AMOUNT).max(PAYMENT_CONFIG.MAX_CONTRIBUTION_AMOUNT).required(),
+  amount: Joi.number().integer().min(LIMITS.CONTRIBUTION.MIN_AMOUNT).max(LIMITS.CONTRIBUTION.MAX_AMOUNT).required(),
   message: Joi.string().max(500).optional(),
   anonymous: Joi.boolean().default(false),
   paymentMethod: Joi.object({
     type: Joi.string().valid('card').required(),
     source: Joi.string().valid('form', 'saved').default('form'),
-    savedPaymentMethodId: Joi.string().when('source', { is: 'saved', then: Joi.required() }),
+    savedPaymentMethodId: Joi.string().optional(),
   }).required(),
 }).required();
 
@@ -62,16 +62,32 @@ async function validateContributionEligibility(
     }
 
     // Vérifier le statut du projet
-    const contributableStatuses = [STATUS.PROJECT.ACTIVE, STATUS.PROJECT.FUNDING];
+    // Accepter plusieurs formats pour compatibilité frontend/backend
+    const contributableStatuses = [
+      STATUS.PROJECT.ACTIVE,      // 'active'
+      STATUS.PROJECT.FUNDING,     // 'funding'
+      'fundingActive',            // Format camelCase du frontend
+      'funding_active',           // Format snake_case alternatif
+      'approved',                 // Statut approuvé alternatif
+    ];
     if (!contributableStatuses.includes(project.status)) {
       throw new https.HttpsError('failed-precondition', `Project is not accepting contributions (status: ${project.status})`);
     }
 
     // Vérifier la deadline
     const now = new Date();
-    const deadline = new Date(project.funding.deadline);
-    if (deadline <= now) {
-      throw new https.HttpsError('failed-precondition', 'Project funding period has ended');
+    let deadlineDate: any = project.deadline;
+    if (!deadlineDate && project.timeline?.endDate) {
+      deadlineDate = project.timeline.endDate;
+    }
+    
+    if (deadlineDate) {
+      const deadline = typeof deadlineDate === 'string' ? new Date(deadlineDate) : 
+                       deadlineDate instanceof Date ? deadlineDate :
+                       deadlineDate.toDate?.() || new Date();
+      if (deadline <= now) {
+        throw new https.HttpsError('failed-precondition', 'Project funding period has ended');
+      }
     }
 
     // Vérifier que le projet n'a pas déjà atteint son objectif
@@ -79,23 +95,27 @@ async function validateContributionEligibility(
       throw new https.HttpsError('failed-precondition', 'Project has already reached its funding goal');
     }
 
-    // Vérifier les limites de contribution du projet
-    if (amount < project.funding.minContribution) {
+    // Vérifier les limites de contribution du projet (minimumContribution avec majuscule)
+    const minContribution = project.funding.minimumContribution || LIMITS.CONTRIBUTION.MIN_AMOUNT;
+    const maxContribution = project.funding.maximumContribution;
+    
+    if (amount < minContribution) {
       throw new https.HttpsError(
         'invalid-argument',
-        `Minimum contribution for this project is ${project.funding.minContribution / 100} EUR`
+        `Minimum contribution for this project is ${minContribution / 100} EUR`
       );
     }
 
-    if (project.funding.maxContribution && amount > project.funding.maxContribution) {
+    if (maxContribution && amount > maxContribution) {
       throw new https.HttpsError(
         'invalid-argument',
-        `Maximum contribution for this project is ${project.funding.maxContribution / 100} EUR`
+        `Maximum contribution for this project is ${maxContribution / 100} EUR`
       );
     }
 
     // Vérifier les limites journalières utilisateur
-    const todayStart = helpers.date.startOfDay(new Date());
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
     const todayContributions = await firestoreHelper.queryDocuments<ContributionDocument>(
       `users/${uid}/contributions`,
       [
@@ -104,16 +124,19 @@ async function validateContributionEligibility(
       ]
     );
 
-    const todayTotal = todayContributions.reduce((sum, c) => sum + c.amount.gross, 0);
-    if (todayTotal + amount > PAYMENT_CONFIG.MAX_DAILY_CONTRIBUTION_AMOUNT) {
+    const todayTotal = todayContributions.data.reduce((sum, c) => sum + c.amount.gross, 0);
+    const dailyLimit = LIMITS.CONTRIBUTION.MAX_AMOUNT * 5;
+    if (todayTotal + amount > dailyLimit) {
       throw new https.HttpsError(
         'permission-denied',
-        `Daily contribution limit exceeded. Remaining: ${(PAYMENT_CONFIG.MAX_DAILY_CONTRIBUTION_AMOUNT - todayTotal) / 100} EUR`
+        `Daily contribution limit exceeded. Remaining: ${(dailyLimit - todayTotal) / 100} EUR`
       );
     }
 
     // Vérifier les limites mensuelles utilisateur
-    const monthStart = helpers.date.startOfMonth(new Date());
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
     const monthlyContributions = await firestoreHelper.queryDocuments<ContributionDocument>(
       `users/${uid}/contributions`,
       [
@@ -122,10 +145,10 @@ async function validateContributionEligibility(
       ]
     );
 
-    const monthlyTotal = monthlyContributions.reduce((sum, c) => sum + c.amount.gross, 0);
+    const monthlyTotal = monthlyContributions.data.reduce((sum, c) => sum + c.amount.gross, 0);
     const monthlyLimit = user.kyc.level >= 2 ? 
-      PAYMENT_CONFIG.MAX_MONTHLY_CONTRIBUTION_ENHANCED : 
-      PAYMENT_CONFIG.MAX_MONTHLY_CONTRIBUTION_BASIC;
+      LIMITS.KYC.ENHANCED_MAX_CONTRIBUTION : 
+      LIMITS.KYC.BASIC_MAX_CONTRIBUTION;
 
     if (monthlyTotal + amount > monthlyLimit) {
       throw new https.HttpsError(
@@ -155,10 +178,10 @@ function calculateTransactionFees(amount: number): {
   netAmount: number;
 } {
   // Frais plateforme (pourcentage fixe)
-  const platformFee = Math.round(amount * PAYMENT_CONFIG.PLATFORM_FEE_RATE);
+  const platformFee = Math.round(amount * (PAYMENT_CONFIG.PLATFORM_FEE_PERCENTAGE / 100));
   
   // Frais Stripe (pourcentage + fixe)
-  const stripeFee = Math.round(amount * PAYMENT_CONFIG.STRIPE_FEE_RATE) + PAYMENT_CONFIG.STRIPE_FIXED_FEE;
+  const stripeFee = Math.round(amount * (PAYMENT_CONFIG.STRIPE_FEE_PERCENTAGE / 100)) + PAYMENT_CONFIG.STRIPE_FEE_FIXED;
   
   const totalFees = platformFee + stripeFee;
   const netAmount = amount - totalFees;
@@ -207,7 +230,8 @@ async function createStripePaymentIntent(
 ): Promise<any> {
   try {
     const fees = calculateTransactionFees(amount);
-    const metadata = prepareStripeMetadata(contributionId, project.uid, user.uid, project, user);
+    const projectId = project.id || project.uid;
+    const metadata = prepareStripeMetadata(contributionId, projectId, user.uid, project, user);
 
     const paymentIntentData: any = {
       amount,
@@ -221,7 +245,7 @@ async function createStripePaymentIntent(
       
       // Configuration pour escrow (Connect account si nécessaire)
       transfer_data: {
-        destination: project.stripeConnectAccountId || process.env.STRIPE_ESCROW_ACCOUNT_ID,
+        destination: (project as any).stripeConnectAccountId || process.env.STRIPE_ESCROW_ACCOUNT_ID,
       },
       
       // Configuration automatique de confirmation
@@ -233,7 +257,9 @@ async function createStripePaymentIntent(
     // Ajouter la méthode de paiement si sauvegardée
     if (paymentMethodData.source === 'saved' && paymentMethodData.savedPaymentMethodId) {
       paymentIntentData.payment_method = paymentMethodData.savedPaymentMethodId;
-      paymentIntentData.customer = user.stripeCustomerId;
+      if ((user as any).stripeCustomerId) {
+        paymentIntentData.customer = (user as any).stripeCustomerId;
+      }
       paymentIntentData.confirm = true; // Auto-confirmer avec méthode sauvegardée
     }
 
@@ -272,66 +298,71 @@ async function createContributionDocument(
   user: UserDocument,
   project: ProjectDocument,
   context: CallableContext
-): Promise<ContributionDocument> {
+): Promise<Partial<ContributionDocument>> {
   const now = new Date();
+  const { Timestamp } = await import('firebase-admin/firestore');
   
-  const contributionData: ContributionDocument = {
+  const contributionData: Partial<ContributionDocument> = {
     // Identifiants
     id: contributionId,
-    uid: contributionId,
     contributorUid: user.uid,
     projectId: data.projectId,
     
     // Informations contributeur (filtrées si anonyme)
-    contributorName: data.anonymous ? 'Contributeur anonyme' : `${user.firstName} ${user.lastName}`,
-    contributorEmail: data.anonymous ? '' : user.email,
-    contributorDisplayName: data.anonymous ? 'Anonyme' : user.displayName,
-    anonymous: data.anonymous,
+    contributor: {
+      uid: user.uid,
+      displayName: data.anonymous ? 'Anonyme' : user.displayName,
+      profilePicture: data.anonymous ? undefined : user.profilePicture,
+      isAnonymous: data.anonymous,
+    },
     
     // Montants et frais
     amount: {
       gross: data.amount,
+      fees: {
+        platform: fees.platformFee,
+        stripe: fees.stripeFee,
+        total: fees.totalFees,
+      },
       net: fees.netAmount,
       currency: project.funding.currency,
-      platformFee: fees.platformFee,
-      stripeFee: fees.stripeFee,
-      totalFees: fees.totalFees,
     },
     
-    // Message et preferences
-    message: data.message?.trim() || '',
-    
-    // Statut et paiement
-    status: 'pending',
+    // Statut et paiement - payment.status est le statut, pas le top-level status
     payment: {
+      status: 'pending',
+      provider: 'stripe',
       paymentIntentId: paymentIntent.id,
-      paymentMethod: data.paymentMethod.type,
-      processorStatus: paymentIntent.status,
-      clientSecret: paymentIntent.client_secret,
+      initiatedAt: Timestamp.fromDate(now),
     },
     
     // Escrow et planification de libération
     escrow: {
-      held: true,
+      status: 'held',
       heldAmount: fees.netAmount,
-      releaseSchedule: project.milestones.map(milestone => ({
-        milestoneId: milestone.id,
-        amount: Math.round(fees.netAmount * milestone.fundingPercentage / 100),
-        releaseCondition: 'milestone_completion',
-        released: false,
-      })),
-      expectedReleaseDate: project.funding.deadline,
+      releasedAmount: 0,
+      releases: [],
     },
     
-    // Permissions et notifications
-    notificationsEnabled: true,
-    receiptGenerated: false,
+    // Message et preferences
+    message: data.message?.trim(),
+    preferences: {
+      anonymous: data.anonymous,
+      receiveUpdates: true,
+      allowContact: !data.anonymous,
+    },
+    
+    // Source et attribution
+    source: {
+      device: 'desktop',
+      userAgent: context.rawRequest.headers['user-agent'] as string,
+    },
     
     // Métadonnées
     ipAddress: context.rawRequest.ip,
-    userAgent: context.rawRequest.headers['user-agent'] as string,
-    createdAt: now,
-    updatedAt: now,
+    verified: false,
+    createdAt: Timestamp.fromDate(now),
+    updatedAt: Timestamp.fromDate(now),
     version: 1,
   };
 
@@ -346,6 +377,7 @@ async function updateProjectFundingStats(
   contributionAmount: number
 ): Promise<void> {
   try {
+    const { Timestamp } = await import('firebase-admin/firestore');
     await firestoreHelper.runTransaction(async (transaction) => {
       const projectRef = firestoreHelper.getDocumentRef('projects', projectId);
       const projectDoc = await transaction.get(projectRef);
@@ -369,9 +401,8 @@ async function updateProjectFundingStats(
         'funding.raised': newRaised,
         'funding.percentage': newPercentage,
         'funding.contributorsCount': newContributorsCount,
-        'stats.lastContributionAt': new Date(),
         status: newStatus,
-        updatedAt: new Date(),
+        updatedAt: Timestamp.now(),
         version: projectData.version + 1,
       });
     });
@@ -395,10 +426,20 @@ async function updateUserContributionStats(
   contributionAmount: number
 ): Promise<void> {
   try {
-    await firestoreHelper.incrementDocument('users', uid, {
-      'stats.totalContributed': contributionAmount,
-      'stats.contributionsCount': 1,
-      'stats.lastContributionAt': new Date(),
+    const { Timestamp } = await import('firebase-admin/firestore');
+    const db = require('firebase-admin').firestore();
+    const userRef = db.collection('users').doc(uid);
+    
+    await db.runTransaction(async (transaction: any) => {
+      const userDoc = await transaction.get(userRef);
+      if (userDoc.exists) {
+        const stats = userDoc.data().stats || {};
+        transaction.update(userRef, {
+          'stats.totalContributed': (stats.totalContributed || 0) + contributionAmount,
+          'stats.contributionsCount': (stats.contributionsCount || 0) + 1,
+          'stats.lastContributionAt': Timestamp.now(),
+        });
+      }
     });
 
     logger.info('User contribution stats updated', {
@@ -419,6 +460,7 @@ async function executeCreateContribution(
   data: ContributionsAPI.CreateContributionRequest,
   context: CallableContext
 ): Promise<ContributionsAPI.CreateContributionResponse> {
+  const { Timestamp } = await import('firebase-admin/firestore');
   const uid = context.auth!.uid;
   
   // Validation de l'éligibilité
@@ -470,7 +512,7 @@ async function executeCreateContribution(
       projectTitle: project.title,
       amount: data.amount,
       status: 'pending',
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
     });
   });
 
@@ -495,7 +537,7 @@ async function executeCreateContribution(
   });
 
   // Log financial pour audit
-  logger.financial('Contribution payment initiated', {
+  logger.business('Contribution payment initiated', 'finance', {
     contributionId,
     paymentIntentId: paymentIntent.id,
     grossAmount: data.amount,
@@ -506,6 +548,29 @@ async function executeCreateContribution(
     projectId: data.projectId,
     contributorUid: uid,
   });
+
+  // Convertir deadline en ISO string
+  let deadlineISO: string;
+  let deadlineDate: any = project.deadline;
+  if (!deadlineDate && project.timeline?.endDate) {
+    deadlineDate = project.timeline.endDate;
+  }
+  
+  let actualDeadlineDate = deadlineDate;
+  if (!actualDeadlineDate) {
+    actualDeadlineDate = new Date(new Date().getTime() + 30 * 24 * 60 * 60 * 1000); // Default 30 days
+  }
+  
+  if (typeof actualDeadlineDate === 'string') {
+    deadlineISO = actualDeadlineDate;
+  } else if (actualDeadlineDate instanceof Date) {
+    deadlineISO = actualDeadlineDate.toISOString();
+  } else if (actualDeadlineDate && 'toDate' in actualDeadlineDate) {
+    // Timestamp Firestore
+    deadlineISO = (actualDeadlineDate as any).toDate().toISOString();
+  } else {
+    deadlineISO = new Date().toISOString();
+  }
 
   return {
     contributionId,
@@ -518,13 +583,12 @@ async function executeCreateContribution(
     fees: {
       platformFee: fees.platformFee,
       stripeFee: fees.stripeFee,
-      totalFees: fees.totalFees,
+      total: fees.totalFees,
     },
     escrow: {
-      holdUntil: project.funding.deadline.toISOString(),
+      holdUntil: deadlineISO,
       releaseConditions: ['milestone_validations'],
     },
-    success: true,
   };
 }
 

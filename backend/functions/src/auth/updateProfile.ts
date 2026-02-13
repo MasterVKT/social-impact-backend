@@ -19,7 +19,8 @@ import { STATUS } from '../utils/constants';
 /**
  * Schéma de validation pour la requête
  */
-const requestSchema = Joi.object({
+function buildRequestSchema() {
+  return Joi.object({
   firstName: Joi.string().min(2).max(50).optional(),
   lastName: Joi.string().min(2).max(50).optional(),
   phoneNumber: commonSchemas.phoneNumber.optional(),
@@ -30,7 +31,7 @@ const requestSchema = Joi.object({
     street: Joi.string().max(100).optional(),
     city: Joi.string().max(50).optional(),
     postalCode: Joi.string().max(10).optional(),
-    country: commonSchemas.countryCode.optional(),
+    country: commonSchemas.country.optional(),
     coordinates: Joi.object({
       lat: Joi.number().min(-90).max(90).optional(),
       lng: Joi.number().min(-180).max(180).optional(),
@@ -60,7 +61,8 @@ const requestSchema = Joi.object({
       causes: Joi.array().items(Joi.string().max(50)).max(10).optional(),
     }).optional(),
   }).optional(),
-}).min(1).required(); // Au moins un champ doit être fourni
+  }).min(1).required();
+}
 
 /**
  * Valide que l'utilisateur peut modifier son profil
@@ -329,7 +331,7 @@ export const updateProfile = https.onCall(
     }
 
     // Validation des données
-    const validatedData = validateWithJoi<Partial<AuthAPI.UpdateProfileRequest>>(requestSchema, data);
+    const validatedData = validateWithJoi<Partial<AuthAPI.UpdateProfileRequest>>(buildRequestSchema(), data);
 
     // Logging de démarrage
     logger.info('Updating user profile', {

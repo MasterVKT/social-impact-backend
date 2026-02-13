@@ -4,6 +4,7 @@
  */
 
 import { firestore } from 'firebase-functions';
+import { Timestamp } from 'firebase-admin/firestore';
 import { logger } from '../utils/logger';
 import { firestoreHelper } from '../utils/firestore';
 import { emailService } from '../integrations/sendgrid/emailService';
@@ -22,7 +23,12 @@ interface ProcessedAuditResults {
   creatorUid: string;
   decision: 'approved' | 'rejected' | 'conditional';
   score: number;
-  findings: string[];
+  findings: Array<{
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    category: string;
+    description: string;
+    recommendation?: string;
+  }>;
   recommendations: string[];
   escrowReleaseAmount: number;
   auditorCompensation: number;
@@ -88,8 +94,8 @@ async function processAuditResults(auditData: AuditDocument): Promise<ProcessedA
  */
 function determineAuditDecision(audit: AuditDocument): 'approved' | 'rejected' | 'conditional' {
   const score = audit.score;
-  const criticalIssues = audit.findings?.filter(finding => 
-    finding.includes('critical') || finding.includes('blocking')
+  const criticalIssues = audit.findings?.filter(finding =>
+    finding.severity === 'critical' || finding.severity === 'high'
   ).length || 0;
 
   // Rejet automatique
@@ -207,26 +213,26 @@ async function updateProjectStatus(results: ProcessedAuditResults): Promise<void
       auditStatus: 'completed',
       auditScore: results.score,
       auditDecision: results.decision,
-      auditCompletedAt: new Date(),
+      auditCompletedAt: Timestamp.now(),
       lastAuditId: results.auditId,
-      updatedAt: new Date()
+      updatedAt: Timestamp.now()
     };
 
     // Mettre à jour le statut selon la décision
     switch (results.decision) {
       case 'approved':
-        statusUpdate.status = STATUS.PROJECT.VALIDATED;
-        statusUpdate.validatedAt = new Date();
+        statusUpdate.status = STATUS.PROJECT.VALIDATED as any;
+        statusUpdate.validatedAt = Timestamp.now();
         break;
-        
+
       case 'conditional':
-        statusUpdate.status = STATUS.PROJECT.CONDITIONAL_APPROVAL;
-        statusUpdate.conditionalApprovalAt = new Date();
+        statusUpdate.status = STATUS.PROJECT.CONDITIONAL_APPROVAL as any;
+        statusUpdate.conditionalApprovalAt = Timestamp.now();
         break;
-        
+
       case 'rejected':
-        statusUpdate.status = STATUS.PROJECT.AUDIT_FAILED;
-        statusUpdate.auditFailedAt = new Date();
+        statusUpdate.status = STATUS.PROJECT.AUDIT_FAILED as any;
+        statusUpdate.auditFailedAt = Timestamp.now();
         statusUpdate.acceptingContributions = false;
         break;
     }
@@ -282,8 +288,8 @@ async function processEscrowRelease(results: ProcessedAuditResults): Promise<voi
       approvedBy: results.auditorUid,
       processingPriority: results.decision === 'approved' ? 'high' : 'medium',
       estimatedProcessingTime: '2-5 business days',
-      createdAt: new Date(),
-      scheduledFor: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24h delay for security
+      createdAt: Timestamp.now(),
+      scheduledFor: Timestamp.fromMillis(Date.now() + 24 * 60 * 60 * 1000) // 24h delay for security
     });
 
     // Mettre à jour les enregistrements d'escrow
@@ -295,7 +301,7 @@ async function processEscrowRelease(results: ProcessedAuditResults): Promise<voi
       ]
     );
 
-    const releasePromises = escrowRecords.map(async (record) => {
+    const releasePromises = escrowRecords.data.map(async (record) => {
       const releaseAmount = Math.round(
         (record.amount / (record.totalProjectEscrow || record.amount)) * results.escrowReleaseAmount
       );
@@ -304,7 +310,7 @@ async function processEscrowRelease(results: ProcessedAuditResults): Promise<voi
         status: results.decision === 'approved' ? 'released' : 'partially_released',
         releaseAmount,
         releaseRequestId,
-        releasedAt: new Date(),
+        releasedAt: Timestamp.now(),
         releaseReason: `audit_${results.decision}`,
         auditId: results.auditId
       });
@@ -315,7 +321,7 @@ async function processEscrowRelease(results: ProcessedAuditResults): Promise<voi
     // Mettre à jour le projet
     await firestoreHelper.updateDocument('projects', results.projectId, {
       'escrow.totalReleased': firestoreHelper.increment(results.escrowReleaseAmount),
-      'escrow.lastReleaseAt': new Date(),
+      'escrow.lastReleaseAt': Timestamp.now(),
       'escrow.releaseRequestId': releaseRequestId
     });
 
@@ -324,7 +330,7 @@ async function processEscrowRelease(results: ProcessedAuditResults): Promise<voi
       projectId: results.projectId,
       auditId: results.auditId,
       releaseAmount: results.escrowReleaseAmount,
-      escrowRecordsUpdated: escrowRecords.length
+      escrowRecordsUpdated: escrowRecords.data.length
     });
 
   } catch (error) {
@@ -357,8 +363,8 @@ async function processAuditorCompensation(results: ProcessedAuditResults): Promi
       auditScore: results.score,
       compensationType: 'audit_completion',
       paymentMethod: 'stripe_transfer', // ou 'manual' selon config
-      scheduledPaymentDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 jours
-      createdAt: new Date()
+      scheduledPaymentDate: Timestamp.fromMillis(Date.now() + 3 * 24 * 60 * 60 * 1000), // 3 jours
+      createdAt: Timestamp.now()
     });
 
     // Notifier l'auditeur
@@ -377,25 +383,26 @@ async function processAuditorCompensation(results: ProcessedAuditResults): Promi
         amount: results.auditorCompensation,
         auditScore: results.score,
         auditDecision: results.decision,
-        paymentDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
+        paymentDate: Timestamp.fromMillis(Date.now() + 3 * 24 * 60 * 60 * 1000).toDate().toISOString()
       },
       priority: 'medium',
       actionUrl: `${process.env.FRONTEND_URL}/auditor/compensations`,
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    } as NotificationDocument);
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as NotificationDocument);
 
     await firestoreHelper.updateDocument('users', results.auditorUid, {
       'notificationCounters.unread': firestoreHelper.increment(1),
       'notificationCounters.total': firestoreHelper.increment(1),
       'stats.totalEarned': firestoreHelper.increment(results.auditorCompensation),
       'stats.auditsCompleted': firestoreHelper.increment(1),
-      'stats.lastCompensation': new Date()
+      'stats.lastCompensation': Timestamp.now()
     });
 
     logger.info('Auditor compensation processed', {
@@ -512,11 +519,12 @@ async function sendCreatorNotification(
     read: false,
     readAt: null,
     delivered: true,
-    deliveredAt: new Date(),
-    createdAt: new Date(),
-    updatedAt: new Date(),
-    version: 1
-  } as NotificationDocument);
+    deliveredAt: Timestamp.now(),
+    createdAt: Timestamp.now(),
+    updatedAt: Timestamp.now(),
+    version: 1,
+    autoDelete: false
+  } as unknown as NotificationDocument);
 
   await firestoreHelper.updateDocument('users', results.creatorUid, {
     'notificationCounters.unread': firestoreHelper.increment(1),
@@ -577,11 +585,12 @@ async function sendContributorNotifications(
         read: false,
         readAt: null,
         delivered: true,
-        deliveredAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        version: 1
-      } as NotificationDocument);
+        deliveredAt: Timestamp.now(),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+        version: 1,
+        autoDelete: false
+      } as unknown as NotificationDocument);
 
       await firestoreHelper.updateDocument('users', contributorUid, {
         'notificationCounters.unread': firestoreHelper.increment(1),
@@ -620,9 +629,9 @@ async function notifyModeratorsOfRejection(
       ]
     );
 
-    const moderatorNotificationPromises = moderators.map(async (moderator) => {
+    const moderatorNotificationPromises = moderators.data.map(async (moderator) => {
       const notificationId = helpers.string.generateId('notif');
-      
+
       return firestoreHelper.setDocument('notifications', notificationId, {
         id: notificationId,
         recipientUid: moderator.uid,
@@ -646,11 +655,12 @@ async function notifyModeratorsOfRejection(
         read: false,
         readAt: null,
         delivered: true,
-        deliveredAt: new Date(),
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        version: 1
-      });
+        deliveredAt: Timestamp.now(),
+        createdAt: Timestamp.now(),
+        updatedAt: Timestamp.now(),
+        version: 1,
+        autoDelete: false
+      } as unknown as NotificationDocument);
     });
 
     await Promise.allSettled(moderatorNotificationPromises);
@@ -658,7 +668,7 @@ async function notifyModeratorsOfRejection(
     logger.info('Moderators notified of project rejection', {
       auditId: results.auditId,
       projectId: results.projectId,
-      moderatorsNotified: moderators.length
+      moderatorsNotified: moderators.data.length
     });
 
   } catch (error) {
@@ -813,14 +823,14 @@ function getScoreRange(score: number): string {
 /**
  * Crée les plans d'amélioration pour approbations conditionnelles
  */
-async function createImprovementPlan(results: ProcessedAuditResults): Promise<void> {
+async function createImprovementPlan(results: ProcessedAuditResults, project: ProjectDocument): Promise<void> {
   try {
     if (results.decision !== 'conditional') {
       return;
     }
 
     const improvementPlanId = helpers.string.generateId('improvement');
-    
+
     // Analyser les recommandations pour créer un plan structuré
     const improvementTasks = results.recommendations.map((recommendation, index) => ({
       id: helpers.string.generateId('task'),
@@ -830,8 +840,8 @@ async function createImprovementPlan(results: ProcessedAuditResults): Promise<vo
       status: 'pending',
       estimatedDuration: '7-14 days',
       assignedTo: results.creatorUid,
-      dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000), // 2 semaines
-      createdAt: new Date()
+      dueDate: Timestamp.fromMillis(Date.now() + 14 * 24 * 60 * 60 * 1000), // 2 semaines
+      createdAt: Timestamp.now()
     }));
 
     await firestoreHelper.setDocument('improvement_plans', improvementPlanId, {
@@ -843,9 +853,9 @@ async function createImprovementPlan(results: ProcessedAuditResults): Promise<vo
       tasks: improvementTasks,
       totalTasks: improvementTasks.length,
       completedTasks: 0,
-      targetCompletionDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 jours
+      targetCompletionDate: Timestamp.fromMillis(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30 jours
       followUpAuditScheduled: false,
-      createdAt: new Date(),
+      createdAt: Timestamp.now(),
       createdBy: results.auditorUid
     });
 
@@ -863,18 +873,19 @@ async function createImprovementPlan(results: ProcessedAuditResults): Promise<vo
         auditId: results.auditId,
         projectId: results.projectId,
         tasksCount: improvementTasks.length,
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        dueDate: Timestamp.fromMillis(Date.now() + 30 * 24 * 60 * 60 * 1000).toDate().toISOString()
       },
       priority: 'high',
       actionUrl: `${process.env.FRONTEND_URL}/projects/${project.slug}/improvements`,
       read: false,
       readAt: null,
       delivered: true,
-      deliveredAt: new Date(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      version: 1
-    });
+      deliveredAt: Timestamp.now(),
+      createdAt: Timestamp.now(),
+      updatedAt: Timestamp.now(),
+      version: 1,
+      autoDelete: false
+    } as unknown as NotificationDocument);
 
     await firestoreHelper.updateDocument('users', results.creatorUid, {
       'notificationCounters.unread': firestoreHelper.increment(1),
@@ -965,20 +976,20 @@ async function initiateRefundProcess(results: ProcessedAuditResults): Promise<vo
 async function updateAuditorProfile(results: ProcessedAuditResults): Promise<void> {
   try {
     // Mettre à jour les statistiques de l'auditeur
-    await firestoreHelper.incrementDocument('users', results.auditorUid, {
-      'stats.auditsCompleted': 1,
-      [`stats.auditDecisions.${results.decision}`]: 1,
+    await firestoreHelper.updateDocument('users', results.auditorUid, {
+      'stats.auditsCompleted': firestoreHelper.increment(1),
+      [`stats.auditDecisions.${results.decision}`]: firestoreHelper.increment(1),
       'stats.averageAuditScore': results.score,
-      'stats.totalCompensation': results.auditorCompensation,
-      'stats.lastAuditCompletion': new Date()
+      'stats.totalCompensation': firestoreHelper.increment(results.auditorCompensation),
+      'stats.lastAuditCompletion': Timestamp.now()
     });
 
     // Mettre à jour la réputation de l'auditeur
     const reputationUpdate = calculateReputationUpdate(results);
     if (reputationUpdate !== 0) {
-      await firestoreHelper.incrementDocument('users', results.auditorUid, {
-        'reputation.score': reputationUpdate,
-        'reputation.lastUpdate': new Date()
+      await firestoreHelper.updateDocument('users', results.auditorUid, {
+        'reputation.score': firestoreHelper.increment(reputationUpdate),
+        'reputation.lastUpdate': Timestamp.now()
       });
     }
 
@@ -1074,7 +1085,8 @@ export const onAuditComplete = firestore
 
       // Actions spéciales selon la décision
       if (results.decision === 'conditional') {
-        await createImprovementPlan(results);
+        const project = await firestoreHelper.getDocument<ProjectDocument>('projects', results.projectId);
+        await createImprovementPlan(results, project);
       } else if (results.decision === 'rejected') {
         await initiateRefundProcess(results);
       }
@@ -1109,6 +1121,7 @@ export const onAuditComplete = firestore
 
       // Log security pour audits rejetés
       if (results.decision === 'rejected') {
+        const project = await firestoreHelper.getDocument<ProjectDocument>('projects', results.projectId);
         logger.security('Project audit rejected - funds secured', 'medium', {
           auditId,
           projectId: results.projectId,
@@ -1116,7 +1129,7 @@ export const onAuditComplete = firestore
           auditorUid: results.auditorUid,
           score: results.score,
           findingsCount: results.findings.length,
-          securedAmount: project.currentFunding,
+          securedAmount: project.funding?.current || 0,
           refundProcessInitiated: true
         });
       }
@@ -1125,7 +1138,7 @@ export const onAuditComplete = firestore
         auditId,
         projectId: results.projectId,
         decision: results.decision,
-        processingTime: Date.now() - new Date(afterData.updatedAt).getTime()
+        processingTime: Date.now() - afterData.updatedAt.toMillis()
       });
 
     } catch (error) {

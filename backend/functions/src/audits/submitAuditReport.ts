@@ -297,8 +297,8 @@ async function processAutomaticFundRelease(
 
     // Traiter les libérations par lots
     const batchSize = 5;
-    for (let i = 0; i < contributions.length; i += batchSize) {
-      const batch = contributions.slice(i, i + batchSize);
+    for (let i = 0; i < contributions.data.length; i += batchSize) {
+      const batch = contributions.data.slice(i, i + batchSize);
       
       const releasePromises = batch.map(async (contribution) => {
         try {
@@ -364,7 +364,7 @@ async function processAutomaticFundRelease(
       projectId: project.uid,
       milestoneId: milestone.id,
       auditId: audit.id,
-      contributionsProcessed: contributions.length,
+      contributionsProcessed: contributions.data.length,
       totalReleased,
     });
 
@@ -701,11 +701,11 @@ async function notifyAdminsOfReportSubmission(
       ]
     );
 
-    if (adminUsers.length === 0) {
+    if (adminUsers.data.length === 0) {
       return;
     }
 
-    const notificationPromises = adminUsers.map(admin => {
+    const notificationPromises = adminUsers.data.map(admin => {
       const emailData = {
         to: admin.email,
         templateId: 'audit_report_submitted_admin',
@@ -730,7 +730,7 @@ async function notifyAdminsOfReportSubmission(
     logger.info('Admins notified of report submission', {
       auditId: audit.id,
       reportId,
-      adminsNotified: adminUsers.length,
+      adminsNotified: adminUsers.data.length,
     });
 
   } catch (error) {
